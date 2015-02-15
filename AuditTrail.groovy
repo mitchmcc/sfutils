@@ -293,13 +293,13 @@ def f = new File(inputFile).withReader {
 		  matcher = (action =~ "Changed Component (.*)")
 
 		  if (matcher.matches()) {
-			printf("Component found: %s\n", matcher[0][1])
+			//printf("Component found: %s\n", matcher[0][1])
 			components[matcher[0][1]] = null
 		  }
 		}
 		
 		if (section.equals('Custom Objects')) {
-		  //println ">>>> action: $action"
+		  println ">>>> action: $action"
 
 		  fieldMatcher = (action =~ "Created custom field (.*) (.*) on (.*)")
 		  
@@ -473,7 +473,11 @@ def f = new File(inputFile).withReader {
 		}
 		
 		if (section.equals('Apex Trigger')) {
-		  triggers[what] = remainder
+		  matcher = (action =~ "(.*) Trigger code: (.*)")
+		  
+		  if (matcher.matches()) {
+			triggers[matcher[0][2]] = matcher[0][1]
+		  }
 		}
 
 		if (section.equals('Customize Opportunities')) {
@@ -514,7 +518,9 @@ numPackageEntries += approvals.size()
 
 println "Number of package entries: $numPackageEntries"
 
-if (verbose || debug) {
+// If the user did not ask for a package file, print the summary to the screen
+
+if (options.p == false) {
   if (profiles.size() > 0) {
 	println "\nProfiles ---------------------------------------------------------------\n"
 	
@@ -644,8 +650,91 @@ if (options.p) {
 	out.println '<?xml version="1.0" encoding="UTF-8"?>'
 	out.println '<Package xmlns="http://soap.sforce.com/2006/04/metadata">'
 
+	if (classes.size() > 0) {
+	  out.println '<types>'
+	  
+	  classes.each {
+		out.println '<members>' + it.key + '</members>'
+	  }
+
+	  out.println '<name>ApexClass</name>'
+      out.println '</types>'
+	}
+	
+	if (triggers.size() > 0) {
+	  out.println '<types>'
+	  
+	  triggers.each{
+		out.println '<members>' + it.key + '</members>'
+	  }
+	  out.println '<name>ApexTrigger</name>'
+      out.println '</types>'
+	}
+
+	if (profiles.size() > 0) {
+	  out.println '<types>'
+	  profiles.each{
+		out.println '<members>' + it.key + '</members>'
+	  }
+	  out.println '<name>Profile</name>'
+      out.println '</types>'
+	}
+	
+	if (pages.size() > 0) {
+	  out.println '<types>'
+	  
+	  pages.each{
+		out.println '<members>' + it.key + '</members>'
+	  }
+	  out.println '<name>ApexPage</name>'
+	  out.println '</types>'
+	}
+	
+	if (workflows.size() > 0) {
+	  out.println '<types>'
+	  
+	  workflows.each{
+		out.println '<members>' + it.key + '</members>'
+	  }
+	  out.println '<name>Workflow</name>'
+	  out.println '</types>'
+	}
+	
+	if (validations.size() > 0) {
+	  out.println '<types>'
+	  
+	  validations.each{
+		out.println '<members>' + it.key + '.' +it.value + '</members>'
+	  }
+	  out.println '<name>CustomObject</name>'
+	  out.println '</types>'
+	}
+	
+	if (layouts.size() > 0) {
+	  out.println '<types>'
+	  
+	  layouts.each{
+		out.println '<members>' + it.key + '</members>'
+	  }
+	  out.println '<name>Layout</name>'
+	  out.println '</types>'
+	}
+	
+	if (fields.size() > 0) {
+	  out.println '<types>'
+	  
+	  fields.each{
+		out.println '<members>' + it.value + '.' + it.key + '</members>'
+	  }
+	  out.println '<name>CustomField</name>'
+	  out.println '</types>'
+	}
+	
     out.println '<version>' + apiVersion + '</version>'
 	out.println '</Package>'
   }
+  
+  
+  
 }
 
