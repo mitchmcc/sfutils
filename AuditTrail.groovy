@@ -115,10 +115,21 @@ if (options.v) {
 	verbose = true
 }
 
-def managedPackagesList = ['BMXP','dsfs','QConfig']
+def managedPackagesList = ['BMXP','dsfs','QConfig','TMS','DocuSign']
 
-def ignoreList = ['Activated','Deactivated','Logged','Password',
-				  'Requested','Granted','For','Email','Feed','Organization']
+// This list lets us ignore user stuff, such as Activate and Deactivate, log-ins, password
+// changes, etc.
+
+def ignoreList = ['Activated',
+				  'Deactivated',
+				  'Logged',
+				  'Password',
+				  'Requested',
+				  'Granted',
+				  'For',
+				  'Email',
+				  'Feed',
+				  'Organization']
 				  
 def whatIgnoreList = ['email','sandbox','help','new','password']
 
@@ -170,6 +181,7 @@ def numOldSkipped = 0
 def numMalformed = 0
 def totalLines = 0
 def numSectionSkipped = 0
+def numManagedPackagesSkipped = 0
 //def numDuplicateKeys = 0
 def numPackageEntries = 0
 
@@ -206,11 +218,30 @@ def f = new File(inputFile).withReader {
 		what = action.split(' ')[1]
 		remainder = action.substring(action.indexOf(what),)
 
+		// Try and filter out managed package stuff
+
+		def skipThis = false
+		
+		managedPackagesList.each {
+		  if (action.contains(it)) {
+			if (debug) println "\n($totalLines) **** action: $action"
+			if (debug) println "($totalLines) **** it: $it"
+			if (debug) println "($totalLines) **** Skipping managed package entry for $it\n"
+			numManagedPackagesSkipped++
+			skipThis = true
+			return
+		  }
+		}
+
+		if (skipThis) {
+		  return
+		}
+		
 		// If the keyword is not one we care about, just continue
 
 		if ((keyword != null) && ignoreList.contains(keyword)) {
 		  if (listIgnored) {
-			println "++++++++++ Ignoring keyword: " + keyword
+			println "($totalLines) ++++++++++ Ignoring keyword: " + keyword
 		  }
 		  numIgnoreSkipped++
 		  return
@@ -220,26 +251,16 @@ def f = new File(inputFile).withReader {
 
 		if (whatIgnoreList.contains(what)) {
 		  if (listIgnored) {
-			println "++++++++++ Ignoring what: " + what
+			println "($totalLines) ++++++++++ Ignoring what: " + what
 		  }
 		  numIgnoreSkipped++
 		  return
 		}
 
-		// We don't care about managed packages, either
-		if ((remainder.contains('dsfs')) ||
-			(remainder.contains('TMS')) ||
-			(remainder.contains('QConfig')) ||
-			(remainder.contains('spotlightfs')) ||
-			(remainder.contains('BMXP'))) {
-			numIgnoreSkipped++
-			return
-		}
-
 		if (verbose || special) {
 			println "\n($totalLines) Section \"$section\""
-			println "\tProcessing keyword \"$keyword\", what: \"$what\", date: $dt"
-			println "\t.... remainder: $remainder"
+			println "($totalLines) \tProcessing keyword \"$keyword\", what: \"$what\", date: $dt"
+			println "($totalLines) \t.... remainder: $remainder"
 		}
 
 		// Next, check for the date if the user entered one.. ignore things older than that date
@@ -249,7 +270,7 @@ def f = new File(inputFile).withReader {
 		try {
 		  changeDate = Date.parse('MM/dd/yyyy', dt)
 		} catch(e) {
-		  println "ERROR: caught Date parse exception, skipping item: " + it[0]
+		  println "($totalLines) ERROR: caught Date parse exception, skipping item: " + it[0]
 
 		  if (stopOnError) {
 			System.exit(1)
@@ -262,12 +283,12 @@ def f = new File(inputFile).withReader {
 		//Date changeDate = Date.parse(it[0].replace('"','').split(' ')[0])
 
 		if (debug) {
-			println "Date: " + changeDate + ", as time: " + changeDate.getTime()
+			println "($totalLines) Date: " + changeDate + ", as time: " + changeDate.getTime()
 		}
 
 		if (changeDate.getTime() < startDate.getTime()) {
 			if (debug || special) {
-				println "Skipping date '$changeDate' entry older than start date '$startDate'"
+				println "($totalLines) Skipping date '$changeDate' entry older than start date '$startDate'"
 			}
 
 			numOldSkipped += 1
@@ -299,13 +320,13 @@ def f = new File(inputFile).withReader {
 		}
 		
 		if (section.equals('Custom Objects')) {
-		  println ">>>> action: $action"
+		  if (debug) println "($totalLines) >>>> action: $action"
 
 		  fieldMatcher = (action =~ "Created custom field (.*) (.*) on (.*)")
 		  
 		  if (fieldMatcher.matches()) {
-			printf("Custom Field: %s, Object: %s, Type: %s\n",
-				   fieldMatcher[0][1], fieldMatcher[0][3], fieldMatcher[0][2])
+			//printf("Custom Field: %s, Object: %s, Type: %s\n",
+			//	   fieldMatcher[0][1], fieldMatcher[0][3], fieldMatcher[0][2])
 			fields[fieldMatcher[0][1]] = fieldMatcher[0][3]
 		  }
 
@@ -322,9 +343,8 @@ def f = new File(inputFile).withReader {
 		  
 		  if (layoutMatcher.matches()) {
 			
-			//assert(!layouts.containsKey(layoutMatcher[0][2]))
 			if (layouts.containsKey(layoutMatcher[0][2])) {
-			  println "WARNING: found layouts key: " + layoutMatcher[0][2]
+			  println "($totalLines) WARNING: found layouts key: " + layoutMatcher[0][2]
 			} else {
 			  layouts[layoutMatcher[0][2]] = layoutMatcher[0][1]
 			}
@@ -333,7 +353,7 @@ def f = new File(inputFile).withReader {
 		}
 		
 		if (section.equals('Page')) {
-		  //println ">>>> Page: what: $what, action: $action"
+		  if (debug) println "($totalLines) >>>> Page: what: $what, action: $action"
 
 		  def obj
 		  def procName
@@ -347,11 +367,12 @@ def f = new File(inputFile).withReader {
 			  procName = pageMatcher[0][1]
 			  obj = pageMatcher[0][2]
 
-			  //println ">>>> Page obj: " + obj + ", name: " + procName
+			  println "($totalLines) >>>> Page obj: " + obj + ", name: " + procName
+			  println "($totalLines) >>>> action: $action"
 			  
 			  if (pages.containsKey(obj)) {
 				//assert(!pages.containsKey(obj))
-				println "WARNING: found pages key: " + obj
+				println "($totalLines) WARNING: found pages key: " + obj
 				
 			  } else {
 				pages[obj] = procName
@@ -361,7 +382,7 @@ def f = new File(inputFile).withReader {
 		}
 		
 		if (section.equals('Approval Process')) {
-		  //println "\n>>>> Page: what: $what, action: $action\n"
+		  if (debug) println "($totalLines) \n>>>> Page: what: $what, action: $action\n"
 
 		  def obj
 		  def name
@@ -377,15 +398,15 @@ def f = new File(inputFile).withReader {
 			if (approvals.containsKey(name)) {
 			  approvals[name] = obj
 			} else {
-			  println "WARNING: found approvals key: " + name + " for object: " + obj
+			  println "($totalLines) WARNING: found approvals key: " + name + " for object: " + obj
 			}
 		  }
 		}
 		
 		if (section.equals('Workflow Rule')) {
-		  //println "it: " + it
-		  //println "Action: " + action
-		  //println "\tWhat: " + what
+		  if (debug) println "($totalLines) it: " + it
+		  if (debug) println "($totalLines) Action: " + action
+		  if (debug) println "($totalLines) \tWhat: " + what
 
 		  def obj
 		  def rule
@@ -397,7 +418,7 @@ def f = new File(inputFile).withReader {
 			obj = matcher[0][3]
 			rule = matcher[0][2]
 			
-			//println "matcher: obj: " + obj + ", rule: " + rule
+			if (debug) println "($totalLines) matcher: obj: " + obj + ", rule: " + rule
 		  }
 		  
 		  matcher2 = (action.value =~ "workflow rule (.*) for Object: (.*)")
@@ -406,7 +427,7 @@ def f = new File(inputFile).withReader {
 			obj = matcher2[0][2]
 			rule = matcher2[0][1]
 
-			//println "matcher2: obj: " + obj + ", rule: " + rule
+			if (debug) println "($totalLines) matcher2: obj: " + obj + ", rule: " + rule
 		  }
 		  
 		  matcher3 = (action.value =~ "(.*) Field Update (.*) for Object: (.*)")
@@ -415,29 +436,29 @@ def f = new File(inputFile).withReader {
 			what = matcher3[0][1]
 			obj = matcher3[0][3]
 			rule = matcher3[0][2]
-			//println "matcher3: what: " + what + ", obj: " + obj + ", rule: " + rule
+			if (debug) println "($totalLines) matcher3: what: " + what + ", obj: " + obj + ", rule: " + rule
 		  }
 
 		  if (rule != null) {
 			if (workflows.containsKey(rule)) {
-			  println "ERROR: workflows already contains key: " + rule + " for value: " + obj
+			  println "($totalLines) ERROR: workflows already contains key: " + rule + " for value: " + obj
 			  assert(!workflows.containsKey(rule))
 			}
 			workflows[rule] = obj
 		  } else {
-			println ">>>> WARNING: no workflow rule match found for action: " + action
+			println "($totalLines) >>>> WARNING: no workflow rule match found for action: " + action
 		  }
 		}
 		
 		if (section.equals('Validation Rules')) {
-		  //println "\n>>>> Validation rule: what: $what, action: $action"
+		  if (debug) println "($totalLines) \n>>>> Validation rule: what: $what, action: $action"
 
 		  newMatcher = (action =~ "New (.*) validation rule (.*)")
 		  
 		  if (newMatcher.matches()) {
-			//println "new matcher0 " + newMatcher[0][0]
-			//println "new matcher1 " + newMatcher[0][1]
-			//println "new matcher2 " + newMatcher[0][2]
+			if (debug) println "($totalLines) new matcher0 " + newMatcher[0][0]
+			if (debug) println "($totalLines) new matcher1 " + newMatcher[0][1]
+			if (debug) println "($totalLines) new matcher2 " + newMatcher[0][2]
 			
 			def obj = newMatcher[0][2].replace('"','')
 			def rule = newMatcher[0][1].replace('"','')
@@ -445,7 +466,7 @@ def f = new File(inputFile).withReader {
 			//printf(">>>> new match for obj (key): %s, rule (value): %s\n", obj, rule)
 
 			if (validations.containsKey(obj)) {
-			  println "ERROR: found duplicate validations key: " + obj
+			  println "($totalLines) ERROR: found duplicate validations key: " + obj
 			} else {
 			  validations[rule] = obj
 			}
@@ -454,10 +475,10 @@ def f = new File(inputFile).withReader {
 		  changeMatcher = (action =~ "Changed (.*) for (.*) validation (.*) from (.*)")
 		  
 		  if (changeMatcher.matches()) {
-			//println "change matcher0 " + changeMatcher[0][0]
-			//println "change matcher1 " + changeMatcher[0][1]
-			//println "change matcher2 " + changeMatcher[0][2]
-			//println "change matcher3 " + changeMatcher[0][3]
+			if (debug) println "($totalLines) change matcher0 " + changeMatcher[0][0]
+			if (debug) println "($totalLines) change matcher1 " + changeMatcher[0][1]
+			if (debug) println "($totalLines) change matcher2 " + changeMatcher[0][2]
+			if (debug) println "($totalLines) change matcher3 " + changeMatcher[0][3]
 
 			def obj = changeMatcher[0][3].replace('"','')
 			def rule = changeMatcher[0][2].replace('"','')
@@ -465,7 +486,7 @@ def f = new File(inputFile).withReader {
 			//printf(">>>> change match for obj (key): %s, rule (value): %s\n",  obj, rule)
 
 			if (validations.containsKey(obj)) {
-			  println "ERROR: found duplicate validations key: " + obj
+			  println "($totalLines) ERROR: found duplicate validations key: " + obj
 			} else {
 			  validations[rule] = obj
 			}
@@ -484,7 +505,7 @@ def f = new File(inputFile).withReader {
 		  if (!objects.containsKey(what)) {
 			  objects[what] = remainder
     	  } else {
-			println "ERROR: found duplicate objects key: " + what
+			println "($totalLines) ERROR: found duplicate objects key: " + what
 		  }
 		}
 		
@@ -496,12 +517,13 @@ def f = new File(inputFile).withReader {
 
 println "\nProcessing Summary for changes since $startDate"
 println "Found $totalLines lines in file (minus 1 for header)"
+println "Number managed package entries skipped: $numManagedPackagesSkipped"
 println "Number sections skipped: $numSectionSkipped"
 println "Number in ignoreList skipped: $numIgnoreSkipped"
 println "Processed $linesProcessed Lines"
 println "Skipped $numOldSkipped old entries"
 println "Found $numMalformed mal-formed entries"
-//println "Number of duplicate keys: $numDuplicateKeys"
+if (debug) println "Number of duplicate keys: $numDuplicateKeys"
 
 numPackageEntries += profiles.size()
 numPackageEntries += classes.size()
@@ -513,7 +535,6 @@ numPackageEntries += pages.size()
 numPackageEntries += layouts.size()
 numPackageEntries += components.size()
 numPackageEntries += workflows.size()
-numPackageEntries += validations.size()
 numPackageEntries += approvals.size()
 
 println "Number of package entries: $numPackageEntries"
@@ -533,7 +554,7 @@ if (options.p == false) {
   if (classes.size() > 0) {
 	println "\nApex Classes ---------------------------------------------------------------\n"
 	classes.each{
-	  //println 'Key: ' + it.key + ', Value: ' + it.value
+	  if (debug) println 'Key: ' + it.key + ', Value: ' + it.value
 	  printf("\t%-40s\n", it.key)
 	}
 	println "\nTotal: " + classes.size() + "\n"
@@ -541,16 +562,9 @@ if (options.p == false) {
   
   if (triggers.size() > 0) {
 	println "\nTriggers ---------------------------------------------------------------\n"
-	printf("\t%-30s %-40s\n\n", "Object", "Trigger")
 	
 	triggers.each{
-	  //println 'Key: ' + it.key + ', Value: ' + it.value
-	  
-	  matcher = (it.value =~ "(.*) Trigger code: (.*)")
-	  
-	  if (matcher.matches()) {
-		printf("\t%-30s %-40s\n",it.key, matcher[0][2])
-	  }
+	  printf("\t%-40s\n",it.key)
 	}
 	println "\nTotal: " + triggers.size() + "\n"
   }
@@ -561,7 +575,7 @@ if (options.p == false) {
 	
 	objects.each{
 	  printf("\t%-40s\n",it.key)
-	  //println 'Key: ' + it.key + ', Value: ' + it.value
+	  if (debug) println 'Key: ' + it.key + ', Value: ' + it.value
 	}
 	println "\nTotal: " + objects.size() + "\n"
   }
@@ -581,9 +595,6 @@ if (options.p == false) {
 	printf("\t%-30s %-40s\n\n", "Object", "Rule Name")
 	
 	workflows.each{
-	  if (debug) {
-		println 'Key: ' + it.key + ', Value: ' + it.value
-	  }
 	  printf("\t%-30s %-40s\n", it.value, it.key)
 	}
 	println "\nTotal: " + workflows.size() + "\n"
@@ -634,7 +645,6 @@ if (options.p == false) {
 	printf("\t%-30s %-40s\n\n", "Object", "Rule Name")
 	
 	approvals.each{
-	  //println 'Key: ' + it.key + ', Value: ' + it.value
 	  printf("\t%-30s %-40s\n", it.value, it.key)
 	}
 	println "\nTotal: " + approvals.size() + "\n"
@@ -706,7 +716,7 @@ if (options.p) {
 	  validations.each{
 		out.println '<members>' + it.key + '.' +it.value + '</members>'
 	  }
-	  out.println '<name>CustomObject</name>'
+	  out.println '<name>ValidationRule</name>'
 	  out.println '</types>'
 	}
 	
@@ -732,9 +742,11 @@ if (options.p) {
 	
     out.println '<version>' + apiVersion + '</version>'
 	out.println '</Package>'
+
+	if (verbose) {
+	  println "Created package.xml file: $packageFile"
+	}
   }
-  
-  
   
 }
 
