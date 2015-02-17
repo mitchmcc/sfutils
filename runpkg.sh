@@ -7,5 +7,5 @@ case $# in
 esac
 	   
 groovy AuditTrail.groovy -D 02/16/2015 -f SetupAuditTrailQA2_02162015.csv \
-	   -i Activated,Deactivated,Logged,Password,Requested,Granted,For,Email,Feed,Organization *
+	   -i Activated,Deactivated,Logged,Password,Requested,Granted,For,Email,Feed,Organization -p package.xml
 
