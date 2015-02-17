@@ -2,10 +2,17 @@
 //
 //   AuditTrail - Parse Salesforce Audit trail csv file
 //
+//   Date         Who      Description
+//
+// 02/17/15       mjm      Added section debug hook; added ignore list to command
+//                         line args; started working on AuditEntry class
 //
 //--------------------------------------------------------------------------------------
 @Grab( 'com.xlson.groovycsv:groovycsv:1.0' )
 import com.xlson.groovycsv.CsvParser
+import groovy.transform.Field
+
+def version = "01.00.00"
 
 // Declare maps
 
@@ -22,13 +29,64 @@ def validations = [:]
 def approvals = [:]
 
 def debug = false
-def special = false
 def verbose = false
 def listSkippedSections = false
 def listIgnored = false
 def stopOnError = false
 def apiVersion = '32.0'
 
+class AuditEntry {
+
+  private String section
+  private String object
+  private String entity
+  private String user
+  private String dateChanged
+
+  AuditEntry(String sec, String obj, String name, String usr, String dt) {
+	this.section = sec
+	this.object = obj
+	this.user = usr
+	this.dateChanged = dt
+	this.entity = name
+  }
+  
+
+}  // end class AuditEntry
+
+// This works like a global variable so this can be seen in the 'doDebug' method below
+@Field def sectionDebug = null
+
+def doDebug(section, flag) {
+  println "(doDebug) enter, section $section, flag $flag"
+  
+  if ((sectionDebug != null) && (sectionDebug.contains(section) && flag)) {
+	println "(doDebug) returning true"
+	return true
+  } else {
+	return false
+  }
+}
+
+def pluralsMap = [
+                  'Opportunities': 'Opportunity',
+				  'Surveys': 'Survey'
+                 ]
+  
+// This list lets us ignore user stuff, such as Activate and Deactivate, log-ins, password
+// changes, etc.
+
+def ignoreList = ['Activated',
+				  'Deactivated',
+				  'Logged',
+				  'Password',
+				  'Requested',
+				  'Granted',
+				  'For',
+				  'Email',
+				  'Feed',
+				  'Organization']
+				  
 def sectionList = [
                    'Apex Class',
 				   'Apex Trigger',
@@ -71,9 +129,11 @@ def sectionList = [
 				   'Manage Users'
                    ]
 				   
-def cli = new CliBuilder(usage: 'AuditTrail.groovy -[hfpDdsvea]')
+def cli = new CliBuilder(usage: 'AuditTrail.groovy -[hfpDsdveai]')
 
 cli.f(args:1, argName:'file', 'Salesforce audit trail csv file')
+cli.s(args:1, argName:'sectionDebug', 'Section to debug')
+cli.i(args:1, argName:'ignoreList', 'List of csv keywords to ignore')
 cli.p(args:1, argName:'packagefile', 'Generate package.xml file')
 cli.D(args:1, argName:'startDate', 'oldest date for changes, format: mm/dd/yyyy')
 cli.a(args:1, argName:'apiVersion', 'Salesforce API version')
@@ -81,7 +141,6 @@ cli.h('show help text')
 cli.v('Verbose mode')
 cli.d('Debug on')
 cli.e('Stop on Error')
-cli.s('Special Debug on')
 
 def options = cli.parse(args)
 
@@ -100,15 +159,16 @@ if (options.d) {
 	debug = true
 }
 
+if (options.s) {
+  sectionDebug = options.s
+  println "Got sectionDebug from command line: $sectionDebug"
+}
+
 if (options.e) {
 	println "Set stopOnError from command line"
 	stopOnError = true
 }
 
-if (options.s) {
-	println "Set special debug from command line"
-	special = true
-}
 
 if (options.v) {
 	println "Set verbose from command line"
@@ -117,20 +177,12 @@ if (options.v) {
 
 def managedPackagesList = ['BMXP','dsfs','QConfig','TMS','DocuSign']
 
-// This list lets us ignore user stuff, such as Activate and Deactivate, log-ins, password
-// changes, etc.
+if (options.i) {
+  tmp = options.i
+  ignoreList = tmp.split(',')
+  println "Got ignoreList from command line: $ignoreList"
+}
 
-def ignoreList = ['Activated',
-				  'Deactivated',
-				  'Logged',
-				  'Password',
-				  'Requested',
-				  'Granted',
-				  'For',
-				  'Email',
-				  'Feed',
-				  'Organization']
-				  
 def whatIgnoreList = ['email','sandbox','help','new','password']
 
 if (options.a) {
@@ -182,8 +234,9 @@ def numMalformed = 0
 def totalLines = 0
 def numSectionSkipped = 0
 def numManagedPackagesSkipped = 0
-//def numDuplicateKeys = 0
 def numPackageEntries = 0
+
+println "AuditTrail.groovy version $version starting up"
 
 def f = new File(inputFile).withReader {
   	def csvc = CsvParser.parseCsv( it )
@@ -257,7 +310,7 @@ def f = new File(inputFile).withReader {
 		  return
 		}
 
-		if (verbose || special) {
+		if (verbose) {
 			println "\n($totalLines) Section \"$section\""
 			println "($totalLines) \tProcessing keyword \"$keyword\", what: \"$what\", date: $dt"
 			println "($totalLines) \t.... remainder: $remainder"
@@ -287,7 +340,7 @@ def f = new File(inputFile).withReader {
 		}
 
 		if (changeDate.getTime() < startDate.getTime()) {
-			if (debug || special) {
+			if (debug) {
 				println "($totalLines) Skipping date '$changeDate' entry older than start date '$startDate'"
 			}
 
@@ -305,9 +358,8 @@ def f = new File(inputFile).withReader {
 		  if (matcher.matches()) {
 			//printf("Custom Field %s, Object: %s\n", matcher[0][1], matcher[0][2])
 			profile = matcher[0][1]
+			profiles[profile] = profile
 		  }
-
-		  profiles[profile] = user
 		}
 		
 		if (section.equals('Component')) {
@@ -353,7 +405,9 @@ def f = new File(inputFile).withReader {
 		}
 		
 		if (section.equals('Page')) {
-		  if (debug) println "($totalLines) >>>> Page: what: $what, action: $action"
+		  if (doDebug(section, debug)) {
+			println "($totalLines) >>>> Page: what: $what, action: $action"
+		  }
 
 		  def obj
 		  def procName
@@ -451,8 +505,12 @@ def f = new File(inputFile).withReader {
 		}
 		
 		if (section.equals('Validation Rules')) {
-		  if (debug) println "($totalLines) \n>>>> Validation rule: what: $what, action: $action"
+		  if (doDebug(section, debug)) {
+			println "($totalLines) \n>>>> Validation rule: what: $what, action: $action"
+		  }
 
+		  //http://stackoverflow.com/questions/1363643/regex-over-multiple-lines-in-groovy
+		  
 		  newMatcher = (action =~ "New (.*) validation rule (.*)")
 		  
 		  if (newMatcher.matches()) {
@@ -472,7 +530,11 @@ def f = new File(inputFile).withReader {
 			}
 		  }
 
-		  changeMatcher = (action =~ "Changed (.*) for (.*) validation (.*) from (.*)")
+		  // Changed to match embedded newlines
+		  //changeMatcher = (action =~ "Changed (.*) for (.*) validation (.*) from (.*)/")
+		  changeMatcher = (action =~ /Changed (.*) for (.*) validation (.*) from (?ms)(.*)/)
+
+		  if (debug) println ">>>> changeMatcher: $changeMatcher"
 		  
 		  if (changeMatcher.matches()) {
 			if (debug) println "($totalLines) change matcher0 " + changeMatcher[0][0]
@@ -483,7 +545,7 @@ def f = new File(inputFile).withReader {
 			def obj = changeMatcher[0][3].replace('"','')
 			def rule = changeMatcher[0][2].replace('"','')
 
-			//printf(">>>> change match for obj (key): %s, rule (value): %s\n",  obj, rule)
+			if (debug) printf(">>>> change match for obj (key): %s, rule (value): %s\n",  obj, rule)
 
 			if (validations.containsKey(obj)) {
 			  println "($totalLines) ERROR: found duplicate validations key: " + obj
@@ -494,10 +556,19 @@ def f = new File(inputFile).withReader {
 		}
 		
 		if (section.equals('Apex Trigger')) {
-		  matcher = (action =~ "(.*) Trigger code: (.*)")
+		  println "action: $action"
+		  
+		  matcher = (action =~ "(Changed|Created) (.*) Trigger code: (.*)")
+
+		  def obj = matcher[0][2]
+		  def name = matcher[0][3]
+		  
+		  def ae = new AuditEntry(section, obj, name, user, dt)
+
+		  println "ae obj: " + ae.object + ", name: " + ae.entity
 		  
 		  if (matcher.matches()) {
-			triggers[matcher[0][2]] = matcher[0][1]
+			triggers[name] = obj
 		  }
 		}
 
@@ -523,7 +594,6 @@ println "Number in ignoreList skipped: $numIgnoreSkipped"
 println "Processed $linesProcessed Lines"
 println "Skipped $numOldSkipped old entries"
 println "Found $numMalformed mal-formed entries"
-if (debug) println "Number of duplicate keys: $numDuplicateKeys"
 
 numPackageEntries += profiles.size()
 numPackageEntries += classes.size()
@@ -554,8 +624,10 @@ if (options.p == false) {
   if (classes.size() > 0) {
 	println "\nApex Classes ---------------------------------------------------------------\n"
 	classes.each{
-	  if (debug) println 'Key: ' + it.key + ', Value: ' + it.value
-	  printf("\t%-40s\n", it.key)
+	  println 'Key: ' + it.key + ', Value: ' + it.value 
+	  if (it.key.equals('User')) {
+		printf("\t\tUser: %s\n", it.value)
+	  }
 	}
 	println "\nTotal: " + classes.size() + "\n"
   }
@@ -712,9 +784,14 @@ if (options.p) {
 	
 	if (validations.size() > 0) {
 	  out.println '<types>'
+
+	  def obj = it.key
+	  if (pluralsMap.contains(it.key)) {
+		obj = pluralsMap[it.key]
+	  }
 	  
 	  validations.each{
-		out.println '<members>' + it.key + '.' +it.value + '</members>'
+		out.println '<members>' + obj + '.' +it.value + '</members>'
 	  }
 	  out.println '<name>ValidationRule</name>'
 	  out.println '</types>'
