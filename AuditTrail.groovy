@@ -11,8 +11,9 @@
 @Grab( 'com.xlson.groovycsv:groovycsv:1.0' )
 import com.xlson.groovycsv.CsvParser
 import groovy.transform.Field
+import groovy.transform.ToString
 
-def version = "01.00.00"
+def version = "01.00.01"
 
 // Declare maps
 
@@ -35,6 +36,16 @@ def listIgnored = false
 def stopOnError = false
 def apiVersion = '32.0'
 
+def linesProcessed = 0
+def numIgnoreSkipped = 0
+def numOldSkipped = 0
+def numMalformed = 0
+def totalLines = 0
+def numSectionSkipped = 0
+def numManagedPackagesSkipped = 0
+def numPackageEntries = 0
+
+@ToString(includeNames=true, includeFields=true)
 class AuditEntry {
 
   private String section
@@ -54,14 +65,30 @@ class AuditEntry {
 
 }  // end class AuditEntry
 
+def handleCustomize(layouts, section, action) {
+  //println "(handleCustomize) section: $section, action: $action"
+
+  matcher = (action =~ "(.*) (.*) page layout (.*)")
+		  
+  if (matcher.matches()) {
+	name = matcher[0][3]
+	obj = matcher[0][2]
+	
+	//println "(handleCustomize) >>>> layout obj: " + obj + ", name: " + name
+	
+	if (!layouts.containsKey(name)) {
+	  layouts[name] = obj
+	}
+  } 
+}  // end handleCustomize
+
 // This works like a global variable so this can be seen in the 'doDebug' method below
 @Field def sectionDebug = null
-
 def doDebug(section, flag) {
-  println "(doDebug) enter, section $section, flag $flag"
+  //println "(doDebug) enter, section $section, flag $flag"
   
   if ((sectionDebug != null) && (sectionDebug.contains(section) && flag)) {
-	println "(doDebug) returning true"
+	//println "(doDebug) returning true"
 	return true
   } else {
 	return false
@@ -100,17 +127,17 @@ def sectionList = [
 				   //'Custom Apps'
 				   'Custom Objects',
 				   //'Custom Tabs'
-				   //'Customize Accounts'
-				   //'Customize Contacts'
-				   //'Customize Home'
-				   //'Customize Leads'
-				   //'Customize Opportunities'
-				   //'Customize Opportunity Products'
-				   //'Customize Price Books'
-				   //'Customize Products'
-				   //'Customize Quote Lines'
-				   //'Customize Quotes'
-				   //'Customize Users'
+				   'Customize Accounts',
+				   'Customize Contacts',
+				   'Customize Home',
+				   'Customize Leads',
+				   'Customize Opportunities',
+				   'Customize Opportunity Products',
+				   'Customize Price Books',
+				   'Customize Products',
+				   'Customize Quote Lines',
+				   'Customize Quotes',
+				   'Customize Users',
 				   //'Data Export'
 				   //'Data Management'
 				   //'Deployment Connections'
@@ -175,7 +202,7 @@ if (options.v) {
 	verbose = true
 }
 
-def managedPackagesList = ['BMXP','dsfs','QConfig','TMS','DocuSign']
+def managedPackagesList = ['BMXP','dsfs','QConfig','TMS','DocuSign','spotlightfs']
 
 if (options.i) {
   tmp = options.i
@@ -227,15 +254,6 @@ if (debug) {
 
 //set up a List of 'Rows' which will contain a list of 'columns' or you can think of it as array[][]
 
-def linesProcessed = 0
-def numIgnoreSkipped = 0
-def numOldSkipped = 0
-def numMalformed = 0
-def totalLines = 0
-def numSectionSkipped = 0
-def numManagedPackagesSkipped = 0
-def numPackageEntries = 0
-
 println "AuditTrail.groovy version $version starting up"
 
 def f = new File(inputFile).withReader {
@@ -256,14 +274,6 @@ def f = new File(inputFile).withReader {
 		def action = it['Action']
 		def section = it['Section']
 		def user = it['User']
-		
-		if (!sectionList.contains(section)) {
-		  if (listSkippedSections) {
-			println "Skipping section: " + section
-		  }
-		  numSectionSkipped++
-		  return
-		}
 		
 		keyword = null
 		what = null
@@ -294,7 +304,7 @@ def f = new File(inputFile).withReader {
 
 		if ((keyword != null) && ignoreList.contains(keyword)) {
 		  if (listIgnored) {
-			println "($totalLines) ++++++++++ Ignoring keyword: " + keyword
+			println "($totalLines) ++++++++++ Ignoring keyword: " + keyword + ", section: $section"
 		  }
 		  numIgnoreSkipped++
 		  return
@@ -310,6 +320,14 @@ def f = new File(inputFile).withReader {
 		  return
 		}
 
+		if (!sectionList.contains(section)) {
+		  if (listSkippedSections) {
+			println "WARNING: Skipping section: " + section
+		  }
+		  numSectionSkipped++
+		  return
+		}
+		
 		if (verbose) {
 			println "\n($totalLines) Section \"$section\""
 			println "($totalLines) \tProcessing keyword \"$keyword\", what: \"$what\", date: $dt"
@@ -370,6 +388,27 @@ def f = new File(inputFile).withReader {
 			components[matcher[0][1]] = null
 		  }
 		}
+
+		if (debug) println "switching on section: $section"
+		
+		switch ( section ) {
+		case 'Customize Accounts':
+		case 'Customize Contacts':
+		case 'Customize Home':
+		case 'Customize Leads':
+		case 'Customize Opportunities':
+		case 'Customize Opportunity Products':
+		case 'Customize Price Books':
+		case 'Customize Products':
+		case 'Customize Quote Lines':
+		case 'Customize Quotes':
+		case 'Customize Users':
+     		handleCustomize(layouts, section, action)
+			break;
+		default:
+     		if (debug) println "Fell out of case statement for section: $section"
+			break;
+		}
 		
 		if (section.equals('Custom Objects')) {
 		  if (debug) println "($totalLines) >>>> action: $action"
@@ -395,9 +434,7 @@ def f = new File(inputFile).withReader {
 		  
 		  if (layoutMatcher.matches()) {
 			
-			if (layouts.containsKey(layoutMatcher[0][2])) {
-			  println "($totalLines) WARNING: found layouts key: " + layoutMatcher[0][2]
-			} else {
+			if (!layouts.containsKey(layoutMatcher[0][2])) {
 			  layouts[layoutMatcher[0][2]] = layoutMatcher[0][1]
 			}
 		  }
@@ -424,16 +461,12 @@ def f = new File(inputFile).withReader {
 			  println "($totalLines) >>>> Page obj: " + obj + ", name: " + procName
 			  println "($totalLines) >>>> action: $action"
 			  
-			  if (pages.containsKey(obj)) {
-				//assert(!pages.containsKey(obj))
-				println "($totalLines) WARNING: found pages key: " + obj
-				
-			  } else {
+			  if (!pages.containsKey(obj)) {
 				pages[obj] = procName
 			  }
 			}
 		  }
-		}
+		}  // end if section = Page
 		
 		if (section.equals('Approval Process')) {
 		  if (debug) println "($totalLines) \n>>>> Page: what: $what, action: $action\n"
@@ -449,13 +482,12 @@ def f = new File(inputFile).withReader {
 			
 			//printf(">>>> App. Process, obj: " + obj + ", what: " + name)
 
-			if (approvals.containsKey(name)) {
+			if (!approvals.containsKey(name)) {
 			  approvals[name] = obj
-			} else {
-			  println "($totalLines) WARNING: found approvals key: " + name + " for object: " + obj
 			}
 		  }
-		}
+
+		}  // end if section = Approval Process
 		
 		if (section.equals('Workflow Rule')) {
 		  if (debug) println "($totalLines) it: " + it
@@ -494,15 +526,11 @@ def f = new File(inputFile).withReader {
 		  }
 
 		  if (rule != null) {
-			if (workflows.containsKey(rule)) {
-			  println "($totalLines) ERROR: workflows already contains key: " + rule + " for value: " + obj
-			  assert(!workflows.containsKey(rule))
-			}
-			workflows[rule] = obj
-		  } else {
-			println "($totalLines) >>>> WARNING: no workflow rule match found for action: " + action
+			if (!workflows.containsKey(rule)) {
+			  workflows[rule] = obj
+			} 
 		  }
-		}
+		} // end if section = Workflow Rule
 		
 		if (section.equals('Validation Rules')) {
 		  if (doDebug(section, debug)) {
@@ -523,9 +551,7 @@ def f = new File(inputFile).withReader {
 
 			//printf(">>>> new match for obj (key): %s, rule (value): %s\n", obj, rule)
 
-			if (validations.containsKey(obj)) {
-			  println "($totalLines) ERROR: found duplicate validations key: " + obj
-			} else {
+			if (!validations.containsKey(obj)) {
 			  validations[rule] = obj
 			}
 		  }
@@ -553,7 +579,7 @@ def f = new File(inputFile).withReader {
 			  validations[rule] = obj
 			}
 		  }
-		}
+		}  // end if section = Validation Rule
 		
 		if (section.equals('Apex Trigger')) {
 		  println "action: $action"
@@ -565,7 +591,7 @@ def f = new File(inputFile).withReader {
 		  
 		  def ae = new AuditEntry(section, obj, name, user, dt)
 
-		  println "ae obj: " + ae.object + ", name: " + ae.entity
+		  //println "ae: " + ae.toString()
 		  
 		  if (matcher.matches()) {
 			triggers[name] = obj
@@ -575,9 +601,7 @@ def f = new File(inputFile).withReader {
 		if (section.equals('Customize Opportunities')) {
 		  if (!objects.containsKey(what)) {
 			  objects[what] = remainder
-    	  } else {
-			println "($totalLines) ERROR: found duplicate objects key: " + what
-		  }
+    	  } 
 		}
 		
 	    linesProcessed++
@@ -624,9 +648,11 @@ if (options.p == false) {
   if (classes.size() > 0) {
 	println "\nApex Classes ---------------------------------------------------------------\n"
 	classes.each{
-	  println 'Key: ' + it.key + ', Value: ' + it.value 
+	  //println 'Key: ' + it.key + ', Value: ' + it.value 
 	  if (it.key.equals('User')) {
-		printf("\t\tUser: %s\n", it.value)
+		printf("\tUser: %s\n", it.value)
+	  } else {
+		printf("\t%s\n", it.key)
 	  }
 	}
 	println "\nTotal: " + classes.size() + "\n"
@@ -728,10 +754,14 @@ if (options.p == false) {
 
 if (options.p) {
 
+  genDate = new Date()
+  
   new File("$packageFile").withWriter { out ->
 	out.println '<?xml version="1.0" encoding="UTF-8"?>'
 	out.println '<Package xmlns="http://soap.sforce.com/2006/04/metadata">'
 
+	out.println '<!-- Generated by AuditTrail version ' + version + ' on ' + genDate + ' -->'
+	
 	if (classes.size() > 0) {
 	  out.println '<types>'
 	  
@@ -785,12 +815,12 @@ if (options.p) {
 	if (validations.size() > 0) {
 	  out.println '<types>'
 
-	  def obj = it.key
-	  if (pluralsMap.contains(it.key)) {
-		obj = pluralsMap[it.key]
-	  }
-	  
 	  validations.each{
+		def obj = it.key
+		if (pluralsMap.containsKey(it.key)) {
+		  obj = pluralsMap[it.key]
+		}
+	  
 		out.println '<members>' + obj + '.' +it.value + '</members>'
 	  }
 	  out.println '<name>ValidationRule</name>'
