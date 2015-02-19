@@ -6,6 +6,9 @@
 //
 // 02/17/15       mjm      Added section debug hook; added ignore list to command
 //                         line args; started working on AuditEntry class
+// 02/18/15       mjm      - Change to add AuditEntry data for each entry
+//                         - Added filter by user
+//                         - Added user and date to report output
 //
 //--------------------------------------------------------------------------------------
 @Grab( 'com.xlson.groovycsv:groovycsv:1.0' )
@@ -13,25 +16,25 @@ import com.xlson.groovycsv.CsvParser
 import groovy.transform.Field
 import groovy.transform.ToString
 
-def version = "01.00.01"
+def version = "01.00.02"
 
 // Declare maps
 
-def profiles = [:]
-def classes = [:]
-def triggers = [:]
-def objects = [:]
-def pages = [:]
-def workflows = [:]
-def layouts = [:]
-def fields = [:]
-def components = [:]
-def validations = [:]
-def approvals = [:]
+def profiles = []
+def classes = []
+def triggers = []
+def objects = []
+def pages = []
+def workflows = []
+def layouts = []
+def fields = []
+def components = []
+def validations = []
+def approvals = []
 
 def debug = false
 def verbose = false
-def listSkippedSections = false
+def listSkippedSections = true
 def listIgnored = false
 def stopOnError = false
 def apiVersion = '32.0'
@@ -49,26 +52,346 @@ def numPackageEntries = 0
 class AuditEntry {
 
   private String section
+  private String action
   private String object
   private String entity
   private String user
   private String dateChanged
 
-  AuditEntry(String sec, String obj, String name, String usr, String dt) {
+  AuditEntry(){
+	this.section = null
+	this.object = null
+	this.user = null
+	this.dateChanged = null
+	this.entity = null
+	this.action = null
+  }
+  
+  AuditEntry(String sec, String action, String obj, String name, String usr, String dt) {
 	this.section = sec
 	this.object = obj
 	this.user = usr
 	this.dateChanged = dt
 	this.entity = name
+	this.action = action
   }
   
 
 }  // end class AuditEntry
 
-def handleCustomize(layouts, section, action) {
-  //println "(handleCustomize) section: $section, action: $action"
+// NOTE: I had to define these as seen below, because if the methods are defined
+// with a value, they are not included in the scope.. this is a Groovy thing.
 
-  matcher = (action =~ "(.*) (.*) page layout (.*)")
+//--------------------------------------------------------------------------------------
+//
+//   handlePlaceHolder
+//
+//--------------------------------------------------------------------------------------
+def handlePlaceHolder
+handlePlaceHolder = { auditEntry ->
+  println "(handlePlaceHolder) enter, section: " + auditEntry.section
+}
+
+//--------------------------------------------------------------------------------------
+//
+//   handleApexClass
+//
+//--------------------------------------------------------------------------------------
+
+def handleApexClass
+handleApexClass = { auditEntry ->
+  println "(handleApexClass) enter"
+  classes.add(auditEntry)
+}
+
+//--------------------------------------------------------------------------------------
+//
+//   handleCustomizeOpportunities
+//
+//--------------------------------------------------------------------------------------
+
+def handleCustomizeOpportunities
+handleCustomizeOpportunities = { auditEntry ->
+  println "(handleCustomizeOpportunities) enter"
+
+  if (!auditEntry.objects.containsKey(what)) {
+	objects.add(auditEntry)
+  } 
+}
+
+//--------------------------------------------------------------------------------------
+//
+//   handleValidationRule
+//
+//--------------------------------------------------------------------------------------
+
+def handleValidationRule
+handleValidationRule = { auditEntry ->
+  println "(handleValidationRule) enter"
+
+  //  if (doDebug(auditEntry.section, debug)) {
+  //println "($totalLines) \n>>>> Validation rule: action: " + $auditEntry.action
+  //}
+  
+  //http://stackoverflow.com/questions/1363643/regex-over-multiple-lines-in-groovy
+  
+  newMatcher = (auditEntry.action =~ "New (.*) validation rule (.*)")
+  
+  if (newMatcher.matches()) {
+	if (debug) println "($totalLines) new matcher0 " + newMatcher[0][0]
+	if (debug) println "($totalLines) new matcher1 " + newMatcher[0][1]
+	if (debug) println "($totalLines) new matcher2 " + newMatcher[0][2]
+	
+	def obj = newMatcher[0][2].replace('"','')
+	def rule = newMatcher[0][1].replace('"','')
+
+	auditEntry.obj = obj
+	auditEntry.entity = rule
+	
+	//printf(">>>> new match for obj (key): %s, rule (value): %s\n", obj, rule)
+	
+	if (!validations.containsKey(obj)) {
+	  validations.add(auditEntry)
+	}
+  }
+  
+  // Changed to match embedded newlines
+  //changeMatcher = (auditEntry.action =~ "Changed (.*) for (.*) validation (.*) from (.*)/")
+  changeMatcher = (auditEntry.action =~ /Changed (.*) for (.*) validation (.*) from (?ms)(.*)/)
+  
+  if (debug) println ">>>> changeMatcher: $changeMatcher"
+  
+  if (changeMatcher.matches()) {
+	if (debug) println "($totalLines) change matcher0 " + changeMatcher[0][0]
+	if (debug) println "($totalLines) change matcher1 " + changeMatcher[0][1]
+	if (debug) println "($totalLines) change matcher2 " + changeMatcher[0][2]
+	if (debug) println "($totalLines) change matcher3 " + changeMatcher[0][3]
+	
+	def obj = changeMatcher[0][3].replace('"','')
+	def rule = changeMatcher[0][2].replace('"','')
+	
+	if (debug) printf(">>>> change match for obj (key): %s, rule (value): %s\n",  obj, rule)
+	
+	if (validations.containsKey(obj)) {
+	  println "($totalLines) ERROR: found duplicate validations key: " + obj
+	} else {
+	  validations[rule] = obj
+	}
+  }
+}
+
+//--------------------------------------------------------------------------------------
+//
+//   handleWorkflow
+//
+//--------------------------------------------------------------------------------------
+
+def handleWorkflow
+handleWorkflow = { auditEntry ->
+  println "(handleWorkflow) enter"
+
+  if (debug) println "($totalLines) it: " + it
+  if (debug) println "($totalLines) Action: " + auditEntry.action
+  if (debug) println "($totalLines) \tWhat: " + what
+
+  def obj
+  def rule
+  
+  matcher = (auditEntry.action.value =~ "(.*) workflow rule (.*) for Object: (.*)")
+  
+  if (matcher.matches()) {
+	what = matcher[0][1]
+	obj = matcher[0][3]
+	rule = matcher[0][2]
+	
+	if (debug) println "($totalLines) matcher: obj: " + obj + ", rule: " + rule
+  }
+  
+  matcher2 = (auditEntry.action.value =~ "workflow rule (.*) for Object: (.*)")
+  
+  if (matcher2.matches()) {
+	obj = matcher2[0][2]
+	rule = matcher2[0][1]
+	
+	if (debug) println "($totalLines) matcher2: obj: " + obj + ", rule: " + rule
+  }
+  
+  matcher3 = (auditEntry.action.value =~ "(.*) Field Update (.*) for Object: (.*)")
+  
+  if (matcher3.matches()) {
+	what = matcher3[0][1]
+	obj = matcher3[0][3]
+	rule = matcher3[0][2]
+	if (debug) println "($totalLines) matcher3: what: " + what + ", obj: " + obj + ", rule: " + rule
+  }
+  
+  if (rule != null) {
+	if (!workflows.containsKey(rule)) {
+	  workflows[rule] = obj
+	} 
+  }
+}
+
+//--------------------------------------------------------------------------------------
+//
+//   handleComponent
+//
+//--------------------------------------------------------------------------------------
+
+def handleComponent
+handleComponent = { auditEntry ->
+  println "(handleComponent) enter"
+
+  matcher = (auditEntry.action =~ "Changed Component (.*)")
+  
+  if (matcher.matches()) {
+	//printf("Component found: %s\n", matcher[0][1])
+	components[matcher[0][1]] = null
+  }
+}
+
+//--------------------------------------------------------------------------------------
+//
+//   handleManageUsers
+//
+//--------------------------------------------------------------------------------------
+
+def handleManageUsers
+handleManageUsers = { auditEntry ->
+  println "(handleManageUsers) enter"
+
+  matcher = (auditEntry.action =~ "Changed profile (.*): (.*)")
+
+  if (matcher.matches()) {
+	//printf("Custom Field %s, Object: %s\n", matcher[0][1], matcher[0][2])
+	profile = matcher[0][1]
+	profiles[profile] = profile
+  }
+}
+
+//--------------------------------------------------------------------------------------
+//
+//   handleApprovalProcess
+//
+//--------------------------------------------------------------------------------------
+
+def handleApprovalProcess
+handleApprovalProcess = { auditEntry ->
+  println "(handleApprovalProcess) enter"
+  if (debug) println "($totalLines) \n>>>> Page: what: $what, action: $auditEntry.action\n"
+  
+  def obj
+  def name
+  
+  matcher = (auditEntry.auditEntry.action =~ "Changed Process Step: (.*) for Approval Process: (.*) for Object: (.*)")
+  
+  if (matcher.matches()) {
+	obj = matcher[0][3]
+	name = matcher[0][2]
+	
+	//printf(">>>> App. Process, obj: " + obj + ", what: " + name)
+	
+	if (!approvals.containsKey(name)) {
+	  approvals[name] = obj
+	}
+  }
+}
+
+//--------------------------------------------------------------------------------------
+//
+//   handlePage
+//
+//--------------------------------------------------------------------------------------
+
+def handlePage
+handlePage = { auditEntry ->
+  println "(handlePage) enter"
+  if (doDebug(section, debug)) {
+	println "($totalLines) >>>> Page: what: $what, action: $auditEntry.action"
+  }
+  
+  def obj
+  def procName
+  
+  pageMatcher = (auditEntry.action =~ "(.*) Page (.*)")
+  
+  if (pageMatcher.matches()) {
+	if (pageMatcher[0][1].equals('Created') ||
+		pageMatcher[0][1].equals('Changed')) {
+	  
+	  procName = pageMatcher[0][1]
+	  obj = pageMatcher[0][2]
+	  
+	  println "($totalLines) >>>> Page obj: " + obj + ", name: " + procName
+	  println "($totalLines) >>>> action: $auditEntry.action"
+	  
+	  if (!pages.containsKey(obj)) {
+		pages[obj] = procName
+	  }
+	}
+  }
+}
+
+//--------------------------------------------------------------------------------------
+//
+//   handleCustomObjects
+//
+//--------------------------------------------------------------------------------------
+
+def handleCustomObjects
+handleCustomObjects = { auditEntry ->
+  println "(handleCustomObjects) enter"
+
+  if (debug) println "($totalLines) >>>> action: $auditEntry.action"
+  
+  fieldMatcher = (auditEntry.action =~ "Created custom field (.*) (.*) on (.*)")
+  
+  if (fieldMatcher.matches()) {
+	//printf("Custom Field: %s, Object: %s, Type: %s\n",
+	//	   fieldMatcher[0][1], fieldMatcher[0][3], fieldMatcher[0][2])
+	fields[fieldMatcher[0][1]] = fieldMatcher[0][3]
+  }
+  
+  objectMatcher = (auditEntry.action =~ "Created custom object: (.*)")
+  
+  if (objectMatcher.matches()) {
+	//printf("Custom Field %s, Object: %s\n", objectMatcher[0][1], objectMatcher[0][2])
+	assert(!objects.containsKey(objectMatcher[0][1]))
+	
+	objects[objectMatcher[0][1]] = objectMatcher[0][1]
+  }
+
+  layoutMatcher = (auditEntry.action =~ "Changed (.*) page layout (.*)")
+  
+  if (layoutMatcher.matches()) {
+	
+	if (!layouts.containsKey(layoutMatcher[0][2])) {
+	  layouts[layoutMatcher[0][2]] = layoutMatcher[0][1]
+	}
+  }
+}
+
+//--------------------------------------------------------------------------------------
+//
+//   handleApexTrigger
+//
+//--------------------------------------------------------------------------------------
+
+def handleApexTrigger
+handleApexTrigger = { auditEntry ->
+  println "(handleApexTrigger) enter"
+  triggers.add(auditEntry)
+}
+
+//--------------------------------------------------------------------------------------
+//
+//   handleCustomize
+//
+//--------------------------------------------------------------------------------------
+def handleCustomize
+handleCustomize = { auditEntry ->
+
+  matcher = (auditEntry.action =~ "(.*) (.*) page layout (.*)")
 		  
   if (matcher.matches()) {
 	name = matcher[0][3]
@@ -113,49 +436,51 @@ def ignoreList = ['Activated',
 				  'Email',
 				  'Feed',
 				  'Organization']
+
+// This maps all of our expected section names to a handler function
 				  
-def sectionList = [
-                   'Apex Class',
-				   'Apex Trigger',
-				   'Approval Process',
-				   //'Chatter Settings'
-				   //'Company Information'
-				   'Component',
-				   'Connected Apps',
-				   //'Critical Updates'
-				   //'Custom App Licenses'
-				   //'Custom Apps'
-				   'Custom Objects',
-				   //'Custom Tabs'
-				   'Customize Accounts',
-				   'Customize Contacts',
-				   'Customize Home',
-				   'Customize Leads',
-				   'Customize Opportunities',
-				   'Customize Opportunity Products',
-				   'Customize Price Books',
-				   'Customize Products',
-				   'Customize Quote Lines',
-				   'Customize Quotes',
-				   'Customize Users',
-				   //'Data Export'
-				   //'Data Management'
-				   //'Deployment Connections'
-				   //'Feed Tracking'
-				   //'Groups'
-				   //'Inbound Change Sets'
-				   //'Manage Users'
-				   'Page',
-				   //'Partner Relationship Management'
-				   //'Security Controls'
-				   //'Sharing Rules'
-				   //'Static Resource'
-				   //'Track Field History'
-				   'Validation Rules',
-				   'Workflow Rule',
-				   'Manage Users'
-                   ]
-				   
+def sectionMap = [
+  'Apex Class' : handleApexClass,
+  'Apex Trigger' : handleApexTrigger,
+  'Approval Process' : handleApprovalProcess,
+  'Chatter Settings' : handlePlaceHolder,
+  'Company Information' : handlePlaceHolder,
+  'Component' : handleComponent,
+  'Connected Apps' : handlePlaceHolder,
+  'Critical Updates' : handlePlaceHolder,
+  'Custom App Licenses' : handlePlaceHolder,
+  'Custom Apps' : handlePlaceHolder,
+  'Custom Objects' : handleCustomObjects,
+  'Custom Tabs' : handlePlaceHolder,
+  'Customize Accounts' : handlePlaceHolder,
+  'Customize Contacts' : handlePlaceHolder,
+  'Customize Home' : handlePlaceHolder,
+  'Customize Leads' : handlePlaceHolder,
+  'Customize Opportunities' : handleCustomizeOpportunities,
+  'Customize Opportunity Products' : handlePlaceHolder,
+  'Customize Price Books' : handlePlaceHolder,
+  'Customize Products' : handlePlaceHolder,
+  'Customize Quote Lines' : handlePlaceHolder,
+  'Customize Quotes' : handlePlaceHolder,
+  'Customize Users' : handlePlaceHolder,
+  'Data Export' : handlePlaceHolder,
+  'Data Management' : handlePlaceHolder,
+  'Deployment Connections' : handlePlaceHolder,
+  'Feed Tracking' : handlePlaceHolder,
+  'Groups' : handlePlaceHolder,
+  'Inbound Change Sets' : handlePlaceHolder,
+  'Manage Users' : handleManageUsers,
+  'Page' : handlePage,
+  'Partner Relationship Management' : handlePlaceHolder,
+  'Security Controls' : handlePlaceHolder,
+  'Sharing Rules' : handlePlaceHolder,
+  'Static Resource' : handlePlaceHolder,
+  'Track Field History' : handlePlaceHolder,
+  'Validation Rules' : handleValidationRule,
+  'Workflow Rule' : handleWorkflow,
+  'Manage Users' : handlePlaceHolder
+]
+
 def cli = new CliBuilder(usage: 'AuditTrail.groovy -[hfpDsdveai]')
 
 cli.f(args:1, argName:'file', 'Salesforce audit trail csv file')
@@ -275,6 +600,12 @@ def f = new File(inputFile).withReader {
 		def section = it['Section']
 		def user = it['User']
 		
+		def ae = new AuditEntry()
+		ae.section = section
+		ae.dateChanged = dt
+		ae.user = user
+		ae.action = action
+		
 		keyword = null
 		what = null
 		keyword = action.split(' ')[0]
@@ -320,12 +651,16 @@ def f = new File(inputFile).withReader {
 		  return
 		}
 
-		if (!sectionList.contains(section)) {
+		if (!sectionMap.keySet().contains(section)) {
 		  if (listSkippedSections) {
 			println "WARNING: Skipping section: " + section
 		  }
 		  numSectionSkipped++
 		  return
+		} else {
+		  // Call the handler method
+		  println "($totalLines) calling sectionMap handler........ for section: $section"
+		  sectionMap[section](ae)
 		}
 		
 		if (verbose) {
@@ -365,239 +700,7 @@ def f = new File(inputFile).withReader {
 			numOldSkipped += 1
 			return
 		}
-
-		if (section.equals('Apex Class')) {
-		  classes[what] = remainder
-		}
 		
-		if (section.equals('Manage Users')) {
-		  matcher = (action =~ "Changed profile (.*): (.*)")
-
-		  if (matcher.matches()) {
-			//printf("Custom Field %s, Object: %s\n", matcher[0][1], matcher[0][2])
-			profile = matcher[0][1]
-			profiles[profile] = profile
-		  }
-		}
-		
-		if (section.equals('Component')) {
-		  matcher = (action =~ "Changed Component (.*)")
-
-		  if (matcher.matches()) {
-			//printf("Component found: %s\n", matcher[0][1])
-			components[matcher[0][1]] = null
-		  }
-		}
-
-		if (debug) println "switching on section: $section"
-		
-		switch ( section ) {
-		case 'Customize Accounts':
-		case 'Customize Contacts':
-		case 'Customize Home':
-		case 'Customize Leads':
-		case 'Customize Opportunities':
-		case 'Customize Opportunity Products':
-		case 'Customize Price Books':
-		case 'Customize Products':
-		case 'Customize Quote Lines':
-		case 'Customize Quotes':
-		case 'Customize Users':
-     		handleCustomize(layouts, section, action)
-			break;
-		default:
-     		if (debug) println "Fell out of case statement for section: $section"
-			break;
-		}
-		
-		if (section.equals('Custom Objects')) {
-		  if (debug) println "($totalLines) >>>> action: $action"
-
-		  fieldMatcher = (action =~ "Created custom field (.*) (.*) on (.*)")
-		  
-		  if (fieldMatcher.matches()) {
-			//printf("Custom Field: %s, Object: %s, Type: %s\n",
-			//	   fieldMatcher[0][1], fieldMatcher[0][3], fieldMatcher[0][2])
-			fields[fieldMatcher[0][1]] = fieldMatcher[0][3]
-		  }
-
-		  objectMatcher = (action =~ "Created custom object: (.*)")
-		  
-		  if (objectMatcher.matches()) {
-			//printf("Custom Field %s, Object: %s\n", objectMatcher[0][1], objectMatcher[0][2])
-			assert(!objects.containsKey(objectMatcher[0][1]))
-			
-			objects[objectMatcher[0][1]] = objectMatcher[0][1]
-		  }
-
-		  layoutMatcher = (action =~ "Changed (.*) page layout (.*)")
-		  
-		  if (layoutMatcher.matches()) {
-			
-			if (!layouts.containsKey(layoutMatcher[0][2])) {
-			  layouts[layoutMatcher[0][2]] = layoutMatcher[0][1]
-			}
-		  }
-		  
-		}
-		
-		if (section.equals('Page')) {
-		  if (doDebug(section, debug)) {
-			println "($totalLines) >>>> Page: what: $what, action: $action"
-		  }
-
-		  def obj
-		  def procName
-		  
-		  pageMatcher = (action =~ "(.*) Page (.*)")
-		  
-		  if (pageMatcher.matches()) {
-			if (pageMatcher[0][1].equals('Created') ||
-				pageMatcher[0][1].equals('Changed')) {
-
-			  procName = pageMatcher[0][1]
-			  obj = pageMatcher[0][2]
-
-			  println "($totalLines) >>>> Page obj: " + obj + ", name: " + procName
-			  println "($totalLines) >>>> action: $action"
-			  
-			  if (!pages.containsKey(obj)) {
-				pages[obj] = procName
-			  }
-			}
-		  }
-		}  // end if section = Page
-		
-		if (section.equals('Approval Process')) {
-		  if (debug) println "($totalLines) \n>>>> Page: what: $what, action: $action\n"
-
-		  def obj
-		  def name
-		  
-		  matcher = (action =~ "Changed Process Step: (.*) for Approval Process: (.*) for Object: (.*)")
-		  
-		  if (matcher.matches()) {
-			obj = matcher[0][3]
-			name = matcher[0][2]
-			
-			//printf(">>>> App. Process, obj: " + obj + ", what: " + name)
-
-			if (!approvals.containsKey(name)) {
-			  approvals[name] = obj
-			}
-		  }
-
-		}  // end if section = Approval Process
-		
-		if (section.equals('Workflow Rule')) {
-		  if (debug) println "($totalLines) it: " + it
-		  if (debug) println "($totalLines) Action: " + action
-		  if (debug) println "($totalLines) \tWhat: " + what
-
-		  def obj
-		  def rule
-		  
-		  matcher = (action.value =~ "(.*) workflow rule (.*) for Object: (.*)")
-		  
-		  if (matcher.matches()) {
-			what = matcher[0][1]
-			obj = matcher[0][3]
-			rule = matcher[0][2]
-			
-			if (debug) println "($totalLines) matcher: obj: " + obj + ", rule: " + rule
-		  }
-		  
-		  matcher2 = (action.value =~ "workflow rule (.*) for Object: (.*)")
-		  
-		  if (matcher2.matches()) {
-			obj = matcher2[0][2]
-			rule = matcher2[0][1]
-
-			if (debug) println "($totalLines) matcher2: obj: " + obj + ", rule: " + rule
-		  }
-		  
-		  matcher3 = (action.value =~ "(.*) Field Update (.*) for Object: (.*)")
-		  
-		  if (matcher3.matches()) {
-			what = matcher3[0][1]
-			obj = matcher3[0][3]
-			rule = matcher3[0][2]
-			if (debug) println "($totalLines) matcher3: what: " + what + ", obj: " + obj + ", rule: " + rule
-		  }
-
-		  if (rule != null) {
-			if (!workflows.containsKey(rule)) {
-			  workflows[rule] = obj
-			} 
-		  }
-		} // end if section = Workflow Rule
-		
-		if (section.equals('Validation Rules')) {
-		  if (doDebug(section, debug)) {
-			println "($totalLines) \n>>>> Validation rule: what: $what, action: $action"
-		  }
-
-		  //http://stackoverflow.com/questions/1363643/regex-over-multiple-lines-in-groovy
-		  
-		  newMatcher = (action =~ "New (.*) validation rule (.*)")
-		  
-		  if (newMatcher.matches()) {
-			if (debug) println "($totalLines) new matcher0 " + newMatcher[0][0]
-			if (debug) println "($totalLines) new matcher1 " + newMatcher[0][1]
-			if (debug) println "($totalLines) new matcher2 " + newMatcher[0][2]
-			
-			def obj = newMatcher[0][2].replace('"','')
-			def rule = newMatcher[0][1].replace('"','')
-
-			//printf(">>>> new match for obj (key): %s, rule (value): %s\n", obj, rule)
-
-			if (!validations.containsKey(obj)) {
-			  validations[rule] = obj
-			}
-		  }
-
-		  // Changed to match embedded newlines
-		  //changeMatcher = (action =~ "Changed (.*) for (.*) validation (.*) from (.*)/")
-		  changeMatcher = (action =~ /Changed (.*) for (.*) validation (.*) from (?ms)(.*)/)
-
-		  if (debug) println ">>>> changeMatcher: $changeMatcher"
-		  
-		  if (changeMatcher.matches()) {
-			if (debug) println "($totalLines) change matcher0 " + changeMatcher[0][0]
-			if (debug) println "($totalLines) change matcher1 " + changeMatcher[0][1]
-			if (debug) println "($totalLines) change matcher2 " + changeMatcher[0][2]
-			if (debug) println "($totalLines) change matcher3 " + changeMatcher[0][3]
-
-			def obj = changeMatcher[0][3].replace('"','')
-			def rule = changeMatcher[0][2].replace('"','')
-
-			if (debug) printf(">>>> change match for obj (key): %s, rule (value): %s\n",  obj, rule)
-
-			if (validations.containsKey(obj)) {
-			  println "($totalLines) ERROR: found duplicate validations key: " + obj
-			} else {
-			  validations[rule] = obj
-			}
-		  }
-		}  // end if section = Validation Rule
-		
-		if (section.equals('Apex Trigger')) {
-		  println "action: $action"
-		  
-		  matcher = (action =~ "(Changed|Created) (.*) Trigger code: (.*)")
-
-		  def obj = matcher[0][2]
-		  def name = matcher[0][3]
-		  
-		  def ae = new AuditEntry(section, obj, name, user, dt)
-
-		  //println "ae: " + ae.toString()
-		  
-		  if (matcher.matches()) {
-			triggers[name] = obj
-		  }
-		}
-
 		if (section.equals('Customize Opportunities')) {
 		  if (!objects.containsKey(what)) {
 			  objects[what] = remainder
@@ -649,11 +752,12 @@ if (options.p == false) {
 	println "\nApex Classes ---------------------------------------------------------------\n"
 	classes.each{
 	  //println 'Key: ' + it.key + ', Value: ' + it.value 
-	  if (it.key.equals('User')) {
-		printf("\tUser: %s\n", it.value)
-	  } else {
-		printf("\t%s\n", it.key)
-	  }
+	  //if (it.key.equals('User')) {
+	  //printf("\tUser: %s\n", it.value)
+	  //} else {
+	  //printf("\t%s\n", it.key)
+	  //}
+	  printf("\t%s\n", it.object)
 	}
 	println "\nTotal: " + classes.size() + "\n"
   }
