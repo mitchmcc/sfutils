@@ -580,7 +580,7 @@ if (options.s) {
 }
 
 if (options.x) {
-  excludeUser = options.u
+  excludeUser = options.x
   println "Got exclude user from command line: $excludeUser"
 }
 
@@ -704,7 +704,7 @@ def f = new File(inputFile).withReader {
 		// Filter out by user if set
 
 		if ((excludeUser != null) && (user.equals(excludeUser))) {
-		  println "($totalLines) ++++++++++ Ignoring user: " + user
+		  if (debug) println "($totalLines) ++++++++++ Ignoring user: " + user
 		  numUsersSkipped++
 		  return
 		}
@@ -712,7 +712,7 @@ def f = new File(inputFile).withReader {
 		// Include only user if set
 
 		if ((includeUser != null) && (!user.equals(includeUser))) {
-		  println "($totalLines) ++++++++++ Ignoring user: " + user
+		  if (debug) println "($totalLines) ++++++++++ Ignoring user: " + user
 		  numUsersSkipped++
 		  return
 		}
@@ -848,7 +848,7 @@ if (options.p == false) {
   
   if (classes.size() > 0) {
 	println "\nApex Classes ---------------------------------------------------------------\n"
-	printf("  %-25s %-25s %-15s\n\n", "Class", "Last ChangedBy", "Last Date Changed")
+	printf("  %-40s %-25s %-15s\n\n", "Class", "Last ChangedBy", "Last Date Changed")
 	classes.each{
 	  //println 'Key: ' + it.key + ', Value: ' + it.value 
 	  //if (it.key.equals('User')) {
@@ -856,17 +856,17 @@ if (options.p == false) {
 	  //} else {
 	  //printf("  %s\n", it.key)
 	  //}
-	  printf("  %-25s %-25s %-15s\n", it.key, it.value.user, it.value.dateChanged)
+	  printf("  %-40s %-25s %-15s\n", it.key, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + classes.size() + "\n"
   }
   
   if (triggers.size() > 0) {
 	println "\nTriggers ---------------------------------------------------------------\n"
-	printf("  %-25s %-25s %-15s\n\n", "Trigger", "Last ChangedBy", "Last Date Changed")
+	printf("  %-40s %-25s %-15s\n\n", "Trigger", "Last ChangedBy", "Last Date Changed")
 	
 	triggers.each{
-	  printf("  %-25s %-25s %-15s\n", it.key, it.value.user, it.value.dateChanged)
+	  printf("  %-40s %-25s %-15s\n", it.key, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + triggers.size() + "\n"
   }
