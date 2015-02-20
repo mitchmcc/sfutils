@@ -9,6 +9,7 @@
 // 02/18/15       mjm      - Change to add AuditEntry data for each entry
 //                         - Added filter by user
 //                         - Added user and date to report output
+// 02/20/15       mjm      - More report fixups; added filter by user
 //
 //--------------------------------------------------------------------------------------
 @Grab( 'com.xlson.groovycsv:groovycsv:1.0' )
@@ -20,17 +21,18 @@ def version = "01.00.02"
 
 // Declare maps
 
-def profiles = []
-def classes = []
-def triggers = []
-def objects = []
-def pages = []
-def workflows = []
-def layouts = []
-def fields = []
-def components = []
-def validations = []
-def approvals = []
+def profiles = [:]
+def classes = [:]
+def triggers = [:]
+def objects = [:]
+def pages = [:]
+def workflows = [:]
+def layouts = [:]
+def fields = [:]
+def tabs = [:]
+def components = [:]
+def validations = [:]
+def approvals = [:]
 
 def debug = false
 def verbose = false
@@ -42,11 +44,14 @@ def apiVersion = '32.0'
 def linesProcessed = 0
 def numIgnoreSkipped = 0
 def numOldSkipped = 0
+def numUsersSkipped = 0
 def numMalformed = 0
 def totalLines = 0
 def numSectionSkipped = 0
 def numManagedPackagesSkipped = 0
 def numPackageEntries = 0
+def excludeUser = null
+def includeUser = null
 
 @ToString(includeNames=true, includeFields=true)
 class AuditEntry {
@@ -90,6 +95,22 @@ class AuditEntry {
 def handlePlaceHolder
 handlePlaceHolder = { auditEntry ->
   println "(handlePlaceHolder) enter, section: " + auditEntry.section
+  if (stopOnError) {
+	println "ERROR: stopping due to unhandled section: " + auditEntry.section
+	System.exit(1)
+  }
+}
+
+//--------------------------------------------------------------------------------------
+//
+//   handleIgnoreSection
+//
+//--------------------------------------------------------------------------------------
+def handleIgnoreSection
+handleIgnoreSection = { auditEntry ->
+  if (debug) {
+	println "(handleIgnoreSection) enter, ignoring section: " + auditEntry.section
+  }
 }
 
 //--------------------------------------------------------------------------------------
@@ -100,8 +121,34 @@ handlePlaceHolder = { auditEntry ->
 
 def handleApexClass
 handleApexClass = { auditEntry ->
-  println "(handleApexClass) enter"
-  classes.add(auditEntry)
+  className = auditEntry.action.split(' ')[1]
+  
+  if (!classes.containsKey(className)) {
+	classes[className] = auditEntry
+  }
+}
+
+//--------------------------------------------------------------------------------------
+//
+//   handleCustomize
+//
+//--------------------------------------------------------------------------------------
+
+def handleCustomize
+handleCustomize = { auditEntry ->
+  matcher = (auditEntry.action =~ "(Created|Changed) (.*) page layout (.*)")
+
+  if (matcher.matches()) {
+	obj = matcher[0][1]
+	ent = matcher[0][2]
+  
+	if (objects.containsKey(ent)) {
+	  auditEntry.object = obj
+	  auditEntry.entity = ent
+	  
+	  objects[ent] = auditEntry
+	}
+  }
 }
 
 //--------------------------------------------------------------------------------------
@@ -112,10 +159,10 @@ handleApexClass = { auditEntry ->
 
 def handleCustomizeOpportunities
 handleCustomizeOpportunities = { auditEntry ->
-  println "(handleCustomizeOpportunities) enter"
+  what = auditEntry.action.split(' ')[1]
 
-  if (!auditEntry.objects.containsKey(what)) {
-	objects.add(auditEntry)
+  if (!objects.containsKey(what)) {
+	objects[what] = auditEntry
   } 
 }
 
@@ -127,12 +174,6 @@ handleCustomizeOpportunities = { auditEntry ->
 
 def handleValidationRule
 handleValidationRule = { auditEntry ->
-  println "(handleValidationRule) enter"
-
-  //  if (doDebug(auditEntry.section, debug)) {
-  //println "($totalLines) \n>>>> Validation rule: action: " + $auditEntry.action
-  //}
-  
   //http://stackoverflow.com/questions/1363643/regex-over-multiple-lines-in-groovy
   
   newMatcher = (auditEntry.action =~ "New (.*) validation rule (.*)")
@@ -142,16 +183,16 @@ handleValidationRule = { auditEntry ->
 	if (debug) println "($totalLines) new matcher1 " + newMatcher[0][1]
 	if (debug) println "($totalLines) new matcher2 " + newMatcher[0][2]
 	
-	def obj = newMatcher[0][2].replace('"','')
-	def rule = newMatcher[0][1].replace('"','')
+	def obj = newMatcher[0][1].replace('"','')
+	def rule = newMatcher[0][2].replace('"','')
 
-	auditEntry.obj = obj
+	auditEntry.object = obj
 	auditEntry.entity = rule
 	
 	//printf(">>>> new match for obj (key): %s, rule (value): %s\n", obj, rule)
 	
-	if (!validations.containsKey(obj)) {
-	  validations.add(auditEntry)
+	if (!validations.containsKey(rule)) {
+	  validations[rule] = auditEntry
 	}
   }
   
@@ -167,15 +208,16 @@ handleValidationRule = { auditEntry ->
 	if (debug) println "($totalLines) change matcher2 " + changeMatcher[0][2]
 	if (debug) println "($totalLines) change matcher3 " + changeMatcher[0][3]
 	
-	def obj = changeMatcher[0][3].replace('"','')
-	def rule = changeMatcher[0][2].replace('"','')
+	def obj = changeMatcher[0][2].replace('"','')
+	def rule = changeMatcher[0][3].replace('"','')
+
+	auditEntry.entity = rule
+	auditEntry.object = obj
 	
 	if (debug) printf(">>>> change match for obj (key): %s, rule (value): %s\n",  obj, rule)
 	
-	if (validations.containsKey(obj)) {
-	  println "($totalLines) ERROR: found duplicate validations key: " + obj
-	} else {
-	  validations[rule] = obj
+	if (!validations.containsKey(rule)) {
+	  validations[rule] = auditEntry
 	}
   }
 }
@@ -188,11 +230,7 @@ handleValidationRule = { auditEntry ->
 
 def handleWorkflow
 handleWorkflow = { auditEntry ->
-  println "(handleWorkflow) enter"
-
-  if (debug) println "($totalLines) it: " + it
   if (debug) println "($totalLines) Action: " + auditEntry.action
-  if (debug) println "($totalLines) \tWhat: " + what
 
   def obj
   def rule
@@ -224,10 +262,13 @@ handleWorkflow = { auditEntry ->
 	rule = matcher3[0][2]
 	if (debug) println "($totalLines) matcher3: what: " + what + ", obj: " + obj + ", rule: " + rule
   }
+
+  auditEntry.object = obj
+  auditEntry.entity = rule
   
   if (rule != null) {
 	if (!workflows.containsKey(rule)) {
-	  workflows[rule] = obj
+	  workflows[rule] = auditEntry
 	} 
   }
 }
@@ -240,13 +281,15 @@ handleWorkflow = { auditEntry ->
 
 def handleComponent
 handleComponent = { auditEntry ->
-  println "(handleComponent) enter"
+  matcher = (auditEntry.action =~ "(Created|Changed) Component (.*)")
 
-  matcher = (auditEntry.action =~ "Changed Component (.*)")
+  comp = matcher[0][1]
   
   if (matcher.matches()) {
-	//printf("Component found: %s\n", matcher[0][1])
-	components[matcher[0][1]] = null
+	if (components.containsKey(comp)) {
+	  //printf("Component found: %s\n", matcher[0][1])
+	  components[comp] = auditEntry
+	}
   }
 }
 
@@ -258,14 +301,12 @@ handleComponent = { auditEntry ->
 
 def handleManageUsers
 handleManageUsers = { auditEntry ->
-  println "(handleManageUsers) enter"
-
   matcher = (auditEntry.action =~ "Changed profile (.*): (.*)")
 
   if (matcher.matches()) {
 	//printf("Custom Field %s, Object: %s\n", matcher[0][1], matcher[0][2])
 	profile = matcher[0][1]
-	profiles[profile] = profile
+	profiles[profile] = auditEntry
   }
 }
 
@@ -277,22 +318,24 @@ handleManageUsers = { auditEntry ->
 
 def handleApprovalProcess
 handleApprovalProcess = { auditEntry ->
-  println "(handleApprovalProcess) enter"
   if (debug) println "($totalLines) \n>>>> Page: what: $what, action: $auditEntry.action\n"
   
   def obj
   def name
   
-  matcher = (auditEntry.auditEntry.action =~ "Changed Process Step: (.*) for Approval Process: (.*) for Object: (.*)")
+  matcher = (auditEntry.action =~ "Changed Process Step: (.*) for Approval Process: (.*) for Object: (.*)")
   
   if (matcher.matches()) {
 	obj = matcher[0][3]
 	name = matcher[0][2]
+
+	auditEntry.entity = name
+	auditEntry.object = obj
 	
 	//printf(">>>> App. Process, obj: " + obj + ", what: " + name)
 	
 	if (!approvals.containsKey(name)) {
-	  approvals[name] = obj
+	  approvals[name] = auditEntry
 	}
   }
 }
@@ -305,11 +348,6 @@ handleApprovalProcess = { auditEntry ->
 
 def handlePage
 handlePage = { auditEntry ->
-  println "(handlePage) enter"
-  if (doDebug(section, debug)) {
-	println "($totalLines) >>>> Page: what: $what, action: $auditEntry.action"
-  }
-  
   def obj
   def procName
   
@@ -322,11 +360,13 @@ handlePage = { auditEntry ->
 	  procName = pageMatcher[0][1]
 	  obj = pageMatcher[0][2]
 	  
-	  println "($totalLines) >>>> Page obj: " + obj + ", name: " + procName
-	  println "($totalLines) >>>> action: $auditEntry.action"
+	  //println "($totalLines) >>>> Page obj: " + obj + ", name: " + procName
+	  //println "($totalLines) >>>> action: $auditEntry.action"
+
+	  auditEntry.entity = procName
 	  
 	  if (!pages.containsKey(obj)) {
-		pages[obj] = procName
+		pages[obj] = auditEntry
 	  }
 	}
   }
@@ -340,16 +380,23 @@ handlePage = { auditEntry ->
 
 def handleCustomObjects
 handleCustomObjects = { auditEntry ->
-  println "(handleCustomObjects) enter"
-
   if (debug) println "($totalLines) >>>> action: $auditEntry.action"
   
-  fieldMatcher = (auditEntry.action =~ "Created custom field (.*) (.*) on (.*)")
+  fieldMatcher = (auditEntry.action =~ "Created custom field (.*) \\((.*)\\) on (.*)")
   
   if (fieldMatcher.matches()) {
 	//printf("Custom Field: %s, Object: %s, Type: %s\n",
 	//	   fieldMatcher[0][1], fieldMatcher[0][3], fieldMatcher[0][2])
-	fields[fieldMatcher[0][1]] = fieldMatcher[0][3]
+
+	entity = fieldMatcher[0][1]
+	object= fieldMatcher[0][3]
+
+	auditEntry.entity = entity
+	auditEntry.object= object
+	
+	if (!fields.containsKey(object)) {
+	  fields[object] = auditEntry
+	}
   }
   
   objectMatcher = (auditEntry.action =~ "Created custom object: (.*)")
@@ -357,8 +404,9 @@ handleCustomObjects = { auditEntry ->
   if (objectMatcher.matches()) {
 	//printf("Custom Field %s, Object: %s\n", objectMatcher[0][1], objectMatcher[0][2])
 	assert(!objects.containsKey(objectMatcher[0][1]))
-	
-	objects[objectMatcher[0][1]] = objectMatcher[0][1]
+
+	auditEntry.entity = objectMatcher[0][1]
+	objects[objectMatcher[0][1]] = auditEntry
   }
 
   layoutMatcher = (auditEntry.action =~ "Changed (.*) page layout (.*)")
@@ -366,7 +414,41 @@ handleCustomObjects = { auditEntry ->
   if (layoutMatcher.matches()) {
 	
 	if (!layouts.containsKey(layoutMatcher[0][2])) {
-	  layouts[layoutMatcher[0][2]] = layoutMatcher[0][1]
+	  obj = layoutMatcher[0][2]
+	  entity = layoutMatcher[0][1]
+	  auditEntry.entity = entity
+	  auditEntry.object = obj
+	  
+	  layouts[entity] = auditEntry
+	}
+  }
+}
+
+//--------------------------------------------------------------------------------------
+//
+//   handleCustomTabs
+//
+//--------------------------------------------------------------------------------------
+
+def handleCustomTabs
+handleCustomTabs = { auditEntry ->
+  if (debug) println "($totalLines) >>>> action: $auditEntry.action"
+  
+  //fieldMatcher = (auditEntry.action =~ "(Created|Changed) custom Visualforce Page tab: (.*)")
+  fieldMatcher = (auditEntry.action =~ "(Created|Changed) custom (.*) tab: (.*)")
+  
+  if (fieldMatcher.matches()) {
+	entity = fieldMatcher[0][3]
+	what = fieldMatcher[0][2]
+	cmd = fieldMatcher[0][1]
+
+	//println "(handleCustomTabs) cmd: $cmd, what: $what, entity: $entity"
+	
+	auditEntry.entity = entity
+	auditEntry.object = what
+
+	if (!tabs.containsKey(entity)) {
+	  tabs[entity] = auditEntry
 	}
   }
 }
@@ -379,31 +461,11 @@ handleCustomObjects = { auditEntry ->
 
 def handleApexTrigger
 handleApexTrigger = { auditEntry ->
-  println "(handleApexTrigger) enter"
-  triggers.add(auditEntry)
+
+  triggerName = auditEntry.action.split(' ')[1]
+  triggers[triggerName] = auditEntry
 }
 
-//--------------------------------------------------------------------------------------
-//
-//   handleCustomize
-//
-//--------------------------------------------------------------------------------------
-def handleCustomize
-handleCustomize = { auditEntry ->
-
-  matcher = (auditEntry.action =~ "(.*) (.*) page layout (.*)")
-		  
-  if (matcher.matches()) {
-	name = matcher[0][3]
-	obj = matcher[0][2]
-	
-	//println "(handleCustomize) >>>> layout obj: " + obj + ", name: " + name
-	
-	if (!layouts.containsKey(name)) {
-	  layouts[name] = obj
-	}
-  } 
-}  // end handleCustomize
 
 // This works like a global variable so this can be seen in the 'doDebug' method below
 @Field def sectionDebug = null
@@ -444,54 +506,55 @@ def sectionMap = [
   'Apex Trigger' : handleApexTrigger,
   'Approval Process' : handleApprovalProcess,
   'Chatter Settings' : handlePlaceHolder,
-  'Company Information' : handlePlaceHolder,
+  'Company Information' : handleIgnoreSection,
   'Component' : handleComponent,
   'Connected Apps' : handlePlaceHolder,
   'Critical Updates' : handlePlaceHolder,
   'Custom App Licenses' : handlePlaceHolder,
   'Custom Apps' : handlePlaceHolder,
   'Custom Objects' : handleCustomObjects,
-  'Custom Tabs' : handlePlaceHolder,
-  'Customize Accounts' : handlePlaceHolder,
-  'Customize Contacts' : handlePlaceHolder,
-  'Customize Home' : handlePlaceHolder,
-  'Customize Leads' : handlePlaceHolder,
-  'Customize Opportunities' : handleCustomizeOpportunities,
-  'Customize Opportunity Products' : handlePlaceHolder,
-  'Customize Price Books' : handlePlaceHolder,
-  'Customize Products' : handlePlaceHolder,
-  'Customize Quote Lines' : handlePlaceHolder,
-  'Customize Quotes' : handlePlaceHolder,
-  'Customize Users' : handlePlaceHolder,
+  'Custom Tabs' : handleCustomTabs,
+  'Customize Accounts' : handleCustomize,
+  'Customize Contacts' : handleCustomize,
+  'Customize Home' : handleCustomize,
+  'Customize Leads' : handleCustomize,
+  'Customize Opportunities' : handleCustomize,
+  'Customize Opportunity Products' : handleCustomize,
+  'Customize Price Books' : handleCustomize,
+  'Customize Products' : handleCustomize,
+  'Customize Quote Lines' : handleCustomize,
+  'Customize Quotes' : handleCustomize,
+  'Customize Users' : handleCustomize,
   'Data Export' : handlePlaceHolder,
   'Data Management' : handlePlaceHolder,
-  'Deployment Connections' : handlePlaceHolder,
+  'Deployment Connections' : handleIgnoreSection,
   'Feed Tracking' : handlePlaceHolder,
   'Groups' : handlePlaceHolder,
-  'Inbound Change Sets' : handlePlaceHolder,
-  'Manage Users' : handleManageUsers,
+  'Inbound Change Sets' : handleIgnoreSection,
+  'Manage Users' : handleIgnoreSection,
   'Page' : handlePage,
   'Partner Relationship Management' : handlePlaceHolder,
-  'Security Controls' : handlePlaceHolder,
+  'Security Controls' : handleIgnoreSection,
   'Sharing Rules' : handlePlaceHolder,
-  'Static Resource' : handlePlaceHolder,
-  'Track Field History' : handlePlaceHolder,
+  'Static Resource' : handleIgnoreSection,
+  'Track Field History' : handleIgnoreSection,
   'Validation Rules' : handleValidationRule,
-  'Workflow Rule' : handleWorkflow,
-  'Manage Users' : handlePlaceHolder
+  'Workflow Rule' : handleWorkflow
 ]
 
-def cli = new CliBuilder(usage: 'AuditTrail.groovy -[hfpDsdveai]')
+def cli = new CliBuilder(usage: 'AuditTrail.groovy -[hfpDsdxuveai]')
 
-cli.f(args:1, argName:'file', 'Salesforce audit trail csv file')
+cli.f(args:1, argName:'inputFile', 'Salesforce audit trail csv file')
 cli.s(args:1, argName:'sectionDebug', 'Section to debug')
+cli.x(args:1, argName:'excludeUser', 'Exclude changes by user portion of email address')
+cli.u(args:1, argName:'includeUser', 'Only show changes by user portion of email address')
 cli.i(args:1, argName:'ignoreList', 'List of csv keywords to ignore')
 cli.p(args:1, argName:'packagefile', 'Generate package.xml file')
 cli.D(args:1, argName:'startDate', 'oldest date for changes, format: mm/dd/yyyy')
-cli.a(args:1, argName:'apiVersion', 'Salesforce API version')
-cli.h('show help text')
-cli.v('Verbose mode')
-cli.d('Debug on')
+cli.a(args:1, argName:'apiVersion', 'Salesforce API version (only with -p option)')
+cli.h(longOpt:'help','Show this help text')
+cli.v(longOpt:'verbose','Verbose mode')
+cli.d(longOpt:'debug','Debug on')
 cli.e('Stop on Error')
 
 def options = cli.parse(args)
@@ -514,6 +577,16 @@ if (options.d) {
 if (options.s) {
   sectionDebug = options.s
   println "Got sectionDebug from command line: $sectionDebug"
+}
+
+if (options.x) {
+  excludeUser = options.u
+  println "Got exclude user from command line: $excludeUser"
+}
+
+if (options.u) {
+  includeUser = options.u
+  println "Got include user from command line: $includeUser"
 }
 
 if (options.e) {
@@ -576,9 +649,6 @@ if (debug) {
 	println "packageFile: " + packageFile
 }
 
-
-//set up a List of 'Rows' which will contain a list of 'columns' or you can think of it as array[][]
-
 println "AuditTrail.groovy version $version starting up"
 
 def f = new File(inputFile).withReader {
@@ -598,8 +668,8 @@ def f = new File(inputFile).withReader {
 		def dt = it['Date'].split(' ')[0]
 		def action = it['Action']
 		def section = it['Section']
-		def user = it['User']
-		
+		def user = it['User'].split('@')[0]
+
 		def ae = new AuditEntry()
 		ae.section = section
 		ae.dateChanged = dt
@@ -630,6 +700,22 @@ def f = new File(inputFile).withReader {
 		if (skipThis) {
 		  return
 		}
+
+		// Filter out by user if set
+
+		if ((excludeUser != null) && (user.equals(excludeUser))) {
+		  println "($totalLines) ++++++++++ Ignoring user: " + user
+		  numUsersSkipped++
+		  return
+		}
+		
+		// Include only user if set
+
+		if ((includeUser != null) && (!user.equals(includeUser))) {
+		  println "($totalLines) ++++++++++ Ignoring user: " + user
+		  numUsersSkipped++
+		  return
+		}
 		
 		// If the keyword is not one we care about, just continue
 
@@ -649,24 +735,6 @@ def f = new File(inputFile).withReader {
 		  }
 		  numIgnoreSkipped++
 		  return
-		}
-
-		if (!sectionMap.keySet().contains(section)) {
-		  if (listSkippedSections) {
-			println "WARNING: Skipping section: " + section
-		  }
-		  numSectionSkipped++
-		  return
-		} else {
-		  // Call the handler method
-		  println "($totalLines) calling sectionMap handler........ for section: $section"
-		  sectionMap[section](ae)
-		}
-		
-		if (verbose) {
-			println "\n($totalLines) Section \"$section\""
-			println "($totalLines) \tProcessing keyword \"$keyword\", what: \"$what\", date: $dt"
-			println "($totalLines) \t.... remainder: $remainder"
 		}
 
 		// Next, check for the date if the user entered one.. ignore things older than that date
@@ -701,12 +769,26 @@ def f = new File(inputFile).withReader {
 			return
 		}
 		
-		if (section.equals('Customize Opportunities')) {
-		  if (!objects.containsKey(what)) {
-			  objects[what] = remainder
-    	  } 
+		if (!sectionMap.keySet().contains(section)) {
+		  if (listSkippedSections) {
+			println "WARNING: Skipping section: " + section
+		  }
+		  numSectionSkipped++
+		  return
+		} else {
+		  // Call the handler method
+		  //println "($totalLines) calling sectionMap handler........ for section: $section"
+		  //println "($totalLines) calling sectionMap ae: " + ae
+		  //println "($totalLines) calling sectionMap dt: " + dt
+		  sectionMap[section](ae)
 		}
 		
+		if (verbose) {
+			println "\n($totalLines) Section \"$section\""
+			println "($totalLines) \tProcessing keyword \"$keyword\", what: \"$what\", date: $dt"
+			println "($totalLines) \t.... remainder: $remainder"
+		}
+
 	    linesProcessed++
 		  
 	}  // end each closure
@@ -717,6 +799,7 @@ println "\nProcessing Summary for changes since $startDate"
 println "Found $totalLines lines in file (minus 1 for header)"
 println "Number managed package entries skipped: $numManagedPackagesSkipped"
 println "Number sections skipped: $numSectionSkipped"
+println "Number users skipped: $numUsersSkipped"
 println "Number in ignoreList skipped: $numIgnoreSkipped"
 println "Processed $linesProcessed Lines"
 println "Skipped $numOldSkipped old entries"
@@ -727,6 +810,7 @@ numPackageEntries += classes.size()
 numPackageEntries += triggers.size()
 numPackageEntries += objects.size()
 numPackageEntries += fields.size()
+numPackageEntries += tabs.size()
 numPackageEntries += validations.size()
 numPackageEntries += pages.size()
 numPackageEntries += layouts.size()
@@ -734,39 +818,55 @@ numPackageEntries += components.size()
 numPackageEntries += workflows.size()
 numPackageEntries += approvals.size()
 
-println "Number of package entries: $numPackageEntries"
+if (options.p) {
+  println "Number of package entries: $numPackageEntries"
+}
 
 // If the user did not ask for a package file, print the summary to the screen
 
 if (options.p == false) {
+
+  println "\n\nSalesforce Audit Trail report for file: $inputFile\n\n"
+  
+  if (includeUser != null) {
+	println "Only entries by user: $includeUser shown as requested"
+  }
+
+  if (excludeUser != null) {
+	println "Only showing entries not by user: $excludeUser shown as requested"
+  }
+  
   if (profiles.size() > 0) {
 	println "\nProfiles ---------------------------------------------------------------\n"
+	printf("  %-25s %-25s %-15s\n\n", "Object", "Rule Name", "Last ChangedBy", "Last Date Changed")
 	
 	profiles.each{
-	  printf("\t%-40s\n", it.key)
+	  printf("  %-40s %-25s %-15s\n", it.key, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + profiles.size() + "\n"
   }
   
   if (classes.size() > 0) {
 	println "\nApex Classes ---------------------------------------------------------------\n"
+	printf("  %-25s %-25s %-15s\n\n", "Class", "Last ChangedBy", "Last Date Changed")
 	classes.each{
 	  //println 'Key: ' + it.key + ', Value: ' + it.value 
 	  //if (it.key.equals('User')) {
-	  //printf("\tUser: %s\n", it.value)
+	  //printf("  User: %s\n", it.value)
 	  //} else {
-	  //printf("\t%s\n", it.key)
+	  //printf("  %s\n", it.key)
 	  //}
-	  printf("\t%s\n", it.object)
+	  printf("  %-25s %-25s %-15s\n", it.key, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + classes.size() + "\n"
   }
   
   if (triggers.size() > 0) {
 	println "\nTriggers ---------------------------------------------------------------\n"
+	printf("  %-25s %-25s %-15s\n\n", "Trigger", "Last ChangedBy", "Last Date Changed")
 	
 	triggers.each{
-	  printf("\t%-40s\n",it.key)
+	  printf("  %-25s %-25s %-15s\n", it.key, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + triggers.size() + "\n"
   }
@@ -774,10 +874,10 @@ if (options.p == false) {
   if (objects.size() > 0) {
 	
 	println "\nObjects ---------------------------------------------------------------\n"
+	printf("  %-25s %-25s %-15s\n\n", "Object", "Last ChangedBy", "Last Date Changed")
 	
 	objects.each{
-	  printf("\t%-40s\n",it.key)
-	  if (debug) println 'Key: ' + it.key + ', Value: ' + it.value
+	  printf("  %-25s %-25s %-15s\n", it.key, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + objects.size() + "\n"
   }
@@ -785,19 +885,26 @@ if (options.p == false) {
   if (pages.size() > 0) {
 	
 	println "\nPages ---------------------------------------------------------------\n"
+	printf("  %-40s %-25s %-15s\n\n", "Page", "Last ChangedBy", "Last Date Changed")
 	
 	pages.each{
-	  printf("\t%-40s\n",it.key)
+	  printf("  %-40s %-25s %-15s\n", it.key, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + pages.size() + "\n"
   }
   
   if (workflows.size() > 0) {
 	println "\nWorkflow Rules ---------------------------------------------------------------\n"
-	printf("\t%-30s %-40s\n\n", "Object", "Rule Name")
-	
+	printf("  %-25s %-55s %-25s %-15s\n\n", "Object", "Rule Name", "Last ChangedBy", "Last Date Changed")
+
 	workflows.each{
-	  printf("\t%-30s %-40s\n", it.value, it.key)
+	  if (it.value.entity.length() > 55) {
+		ruleName = it.value.entity.substring(0,50) + "..."
+	  } else {
+		ruleName = it.value.entity
+	  }
+	
+	  printf("  %-25s %-55s %-25s %-15s\n", it.value.object, ruleName, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + workflows.size() + "\n"
   }
@@ -805,53 +912,67 @@ if (options.p == false) {
   if (validations.size() > 0) {
 	
 	println "\nValidation Rules ---------------------------------------------------------------\n"
-	printf("\t%-30s %-40s\n\n", "Object", "Rule Name")
+	printf("  %-25s %-40s %-25s %-15s\n\n", "Object", "Rule Name", "Last ChangedBy", "Last Date Changed")
 	
 	validations.each{
-	  printf("\t%-30s %-40s\n", it.key, it.value)
+	  printf("  %-25s %-40s %-25s %-15s\n", it.value.object, it.value.entity, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + validations.size() + "\n"
   }
   
   if (layouts.size() > 0) {
 	println "\nLayouts ---------------------------------------------------------------\n"
-	printf("\t%-30s %-40s\n\n", "Object", "Layout")
+	printf("  %-25s %-40s %-25s %-15s\n\n", "Object", "Layout", "Last ChangedBy", "Last Date Changed")
 	
 	layouts.each{
-	  printf("\t%-30s %-40s\n",it.value,it.key)
+	  printf("  %-25s %-40s %-25s %-15s\n", it.value.entity, it.value.object, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + layouts.size() + "\n"
   }
   
   if (fields.size() > 0) {
 	println "\nFields ---------------------------------------------------------------\n"
-	printf("\t%-30s %-40s\n\n", "Object", "Field")
+	printf("  %-25s %-40s %-25s %-15s\n\n", "Object", "Field", "Last ChangedBy", "Last Date Changed")
 	
 	fields.each{
-	  printf("\t%-30s %-40s\n",it.value,it.key)
+	  printf("  %-25s %-40s %-25s %-15s\n", it.key, it.value.entity, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + fields.size() + "\n"
   }
   
+  if (tabs.size() > 0) {
+	println "\nTabs ---------------------------------------------------------------\n"
+	printf("  %-25s %-40s %-25s %-15s\n\n", "Tab", "Type", "Last ChangedBy", "Last Date Changed")
+	
+	tabs.each{
+	  printf("  %-25s %-40s %-25s %-15s\n", it.value.entity,it.value.object, it.value.user, it.value.dateChanged)
+	}
+	println "\nTotal: " + tabs.size() + "\n"
+  }
+  
   if (components.size() > 0) {
 	println "\nComponents ---------------------------------------------------------------\n"
+	printf("  %-25s %-40s %-25s %-15s\n\n", "Component", "", "Last ChangedBy", "Last Date Changed")
 	
 	components.each{
-	  printf("\t%-40s\n",it.key)
+	  printf("  %-25s %-40s %-25s %-15s\n", it.key, it.value.entity, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + components.size() + "\n"
   }
   
   if (approvals.size() > 0) {
 	println "\nApproval Processes ---------------------------------------------------------------\n"
-	printf("\t%-30s %-40s\n\n", "Object", "Rule Name")
+	printf("  %-25s %-40s %-25s %-15s\n\n", "Object", "Rule Name", "Last ChangedBy", "Last Date Changed")
 	
 	approvals.each{
-	  printf("\t%-30s %-40s\n", it.value, it.key)
+	  printf("  %-25s %-40s %-25s %-15s\n", it.value.object, it.value.entity, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + approvals.size() + "\n"
   }
-  
+
+  if (!options.p) {
+	println "\nNumber of entries: $numPackageEntries"
+  }
 }
 
 // Lastly, if package file was requested, generate one
