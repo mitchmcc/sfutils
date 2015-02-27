@@ -37,7 +37,7 @@ def HANDLED = 0
 def NOT_HANDLED = 1
 def IGNORED = 2
 
-def version = "01.00.02"
+def version = "01.00.03"
 
 // Declare maps
 
