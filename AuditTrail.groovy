@@ -2,6 +2,9 @@
 //
 //   AuditTrail - Parse Salesforce Audit trail csv file
 //
+//   @author - Mitchell J. McConnell
+//   @email - mitch@mitchellmcconnell.net
+//
 //   Date         Who      Description
 //
 // 02/17/15       mjm      Added section debug hook; added ignore list to command
@@ -16,6 +19,23 @@
 import com.xlson.groovycsv.CsvParser
 import groovy.transform.Field
 import groovy.transform.ToString
+
+// Constants
+def SUCCESS = 0
+def ERROR = 1
+
+// Section handler return codes
+// All sections that are handled return HANDLED.  All others fall into
+// one of two categories: ones that we understand and choose to ignore
+// return IGNORED.  These are things like password changes, deployment 
+// connections, etc.  All others return NOT_HANDLED.
+
+// Also, note that some sections, although they are handled, have some
+// keywords which can be ignored via the ignore list.
+
+def HANDLED = 0
+def NOT_HANDLED = 1
+def IGNORED = 2
 
 def version = "01.00.02"
 
@@ -37,7 +57,8 @@ def approvals = [:]
 def debug = false
 def verbose = false
 def listSkippedSections = true
-def listIgnored = false
+def listIgnored = true
+def warnIgnoreSection = false
 def stopOnError = false
 def apiVersion = '32.0'
 
@@ -48,10 +69,13 @@ def numUsersSkipped = 0
 def numMalformed = 0
 def totalLines = 0
 def numSectionSkipped = 0
+def numSectionNotFound = 0
 def numManagedPackagesSkipped = 0
 def numPackageEntries = 0
 def excludeUser = null
 def includeUser = null
+
+def managedPackagesList = ['BMXP','dsfs','QConfig','TMS','DocuSign','spotlightfs']
 
 @ToString(includeNames=true, includeFields=true)
 class AuditEntry {
@@ -60,6 +84,7 @@ class AuditEntry {
   private String action
   private String object
   private String entity
+  private String entity2
   private String user
   private String dateChanged
 
@@ -69,6 +94,7 @@ class AuditEntry {
 	this.user = null
 	this.dateChanged = null
 	this.entity = null
+	this.entity2 = null
 	this.action = null
   }
   
@@ -78,11 +104,17 @@ class AuditEntry {
 	this.user = usr
 	this.dateChanged = dt
 	this.entity = name
+	this.entity2 = null
 	this.action = action
   }
   
 
 }  // end class AuditEntry
+
+// Each section can have its own handler function which parses the entry and
+// stores the parts we care about.  Some we specifically ignore, and others
+// just have a place-holder until we figure out whether or now we want
+// to handle them.
 
 // NOTE: I had to define these as seen below, because if the methods are defined
 // with a value, they are not included in the scope.. this is a Groovy thing.
@@ -99,6 +131,7 @@ handlePlaceHolder = { auditEntry ->
 	println "ERROR: stopping due to unhandled section: " + auditEntry.section
 	System.exit(1)
   }
+  return NOT_HANDLED
 }
 
 //--------------------------------------------------------------------------------------
@@ -108,9 +141,11 @@ handlePlaceHolder = { auditEntry ->
 //--------------------------------------------------------------------------------------
 def handleIgnoreSection
 handleIgnoreSection = { auditEntry ->
-  if (debug) {
+
+  if (warnIgnoreSection) {
 	println "(handleIgnoreSection) enter, ignoring section: " + auditEntry.section
   }
+  return IGNORED
 }
 
 //--------------------------------------------------------------------------------------
@@ -126,6 +161,7 @@ handleApexClass = { auditEntry ->
   if (!classes.containsKey(className)) {
 	classes[className] = auditEntry
   }
+  return HANDLED
 }
 
 //--------------------------------------------------------------------------------------
@@ -145,10 +181,13 @@ handleCustomize = { auditEntry ->
 	if (objects.containsKey(ent)) {
 	  auditEntry.object = obj
 	  auditEntry.entity = ent
+
+	  printf("(handleCustomize) obj: %s, entity: %s\n", obj, ent)
 	  
 	  objects[ent] = auditEntry
 	}
   }
+  return HANDLED
 }
 
 //--------------------------------------------------------------------------------------
@@ -162,8 +201,10 @@ handleCustomizeOpportunities = { auditEntry ->
   what = auditEntry.action.split(' ')[1]
 
   if (!objects.containsKey(what)) {
+	printf("(handleCustomizeOpportunities) what: %s\n", what)
 	objects[what] = auditEntry
   } 
+  return HANDLED
 }
 
 //--------------------------------------------------------------------------------------
@@ -220,6 +261,7 @@ handleValidationRule = { auditEntry ->
 	  validations[rule] = auditEntry
 	}
   }
+  return HANDLED
 }
 
 //--------------------------------------------------------------------------------------
@@ -271,6 +313,7 @@ handleWorkflow = { auditEntry ->
 	  workflows[rule] = auditEntry
 	} 
   }
+  return HANDLED
 }
 
 //--------------------------------------------------------------------------------------
@@ -291,6 +334,7 @@ handleComponent = { auditEntry ->
 	  components[comp] = auditEntry
 	}
   }
+  return HANDLED
 }
 
 //--------------------------------------------------------------------------------------
@@ -301,13 +345,30 @@ handleComponent = { auditEntry ->
 
 def handleManageUsers
 handleManageUsers = { auditEntry ->
-  matcher = (auditEntry.action =~ "Changed profile (.*): (.*)")
+
+  //print "(handleManageUsers) action: " + auditEntry.action
+  
+  matcher = (auditEntry.action =~ "Changed profile (.*): (.*) for (.*) record type (.*)")
 
   if (matcher.matches()) {
-	//printf("Custom Field %s, Object: %s\n", matcher[0][1], matcher[0][2])
 	profile = matcher[0][1]
-	profiles[profile] = auditEntry
+	obj = matcher[0][2]
+	recType = matcher[0][3]
+
+	key = obj + "." + profile + "." + recType
+	
+	printf("(handleManageUsers) profile: %s, object: %s, rectype: %s\n",profile, obj, recType)
+	printf("(handleManageUsers) ae datechanged: %s\n", auditEntry.dateChanged)
+
+	auditEntry.object = obj
+	auditEntry.entity = profile  //recType
+	auditEntry.entity2 = recType
+	
+	if (!profiles.containsKey(key)) {
+	  profiles[key] = auditEntry
+	}
   }
+  return HANDLED
 }
 
 //--------------------------------------------------------------------------------------
@@ -338,6 +399,7 @@ handleApprovalProcess = { auditEntry ->
 	  approvals[name] = auditEntry
 	}
   }
+  return HANDLED
 }
 
 //--------------------------------------------------------------------------------------
@@ -370,6 +432,7 @@ handlePage = { auditEntry ->
 	  }
 	}
   }
+  return HANDLED
 }
 
 //--------------------------------------------------------------------------------------
@@ -393,9 +456,11 @@ handleCustomObjects = { auditEntry ->
 
 	auditEntry.entity = entity
 	auditEntry.object= object
+
+	key = object + "." + entity
 	
 	if (!fields.containsKey(object)) {
-	  fields[object] = auditEntry
+	  fields[key] = auditEntry
 	}
   }
   
@@ -405,23 +470,43 @@ handleCustomObjects = { auditEntry ->
 	//printf("Custom Field %s, Object: %s\n", objectMatcher[0][1], objectMatcher[0][2])
 	assert(!objects.containsKey(objectMatcher[0][1]))
 
-	auditEntry.entity = objectMatcher[0][1]
-	objects[objectMatcher[0][1]] = auditEntry
+	obj = objectMatcher[0][1]
+	auditEntry.entity = ""
+	auditEntry.object = obj
+	objects[obj] = auditEntry
+  }
+
+  objectMatcher2 = (auditEntry.action =~ "Added value (.*) to (.*) picklist (.*) on (.*)")
+  
+  if (objectMatcher2.matches()) {
+	obj = objectMatcher2[0][4]
+	value = objectMatcher2[0][1]
+	field = obj + "." + objectMatcher2[0][2]
+	
+	printf("Custom Field: %s, Object: %s, Value: %s\n", field, obj, value)
+	auditEntry.entity = value
+	auditEntry.object = obj
+	objects[field] = auditEntry
   }
 
   layoutMatcher = (auditEntry.action =~ "Changed (.*) page layout (.*)")
   
   if (layoutMatcher.matches()) {
 	
-	if (!layouts.containsKey(layoutMatcher[0][2])) {
-	  obj = layoutMatcher[0][2]
-	  entity = layoutMatcher[0][1]
+	obj = layoutMatcher[0][2]
+	entity = layoutMatcher[0][1]
+
+	key = obj + "." + entity
+	
+	if (!layouts.containsKey(key)) {
 	  auditEntry.entity = entity
 	  auditEntry.object = obj
 	  
-	  layouts[entity] = auditEntry
+	  layouts[key] = auditEntry
 	}
   }
+  
+  return HANDLED
 }
 
 //--------------------------------------------------------------------------------------
@@ -451,6 +536,7 @@ handleCustomTabs = { auditEntry ->
 	  tabs[entity] = auditEntry
 	}
   }
+  return HANDLED
 }
 
 //--------------------------------------------------------------------------------------
@@ -466,19 +552,7 @@ handleApexTrigger = { auditEntry ->
   triggers[triggerName] = auditEntry
 }
 
-
-// This works like a global variable so this can be seen in the 'doDebug' method below
-@Field def sectionDebug = null
-def doDebug(section, flag) {
-  //println "(doDebug) enter, section $section, flag $flag"
-  
-  if ((sectionDebug != null) && (sectionDebug.contains(section) && flag)) {
-	//println "(doDebug) returning true"
-	return true
-  } else {
-	return false
-  }
-}
+// This lets us translate back from certain plural forms to the singular
 
 def pluralsMap = [
                   'Opportunities': 'Opportunity',
@@ -531,7 +605,7 @@ def sectionMap = [
   'Feed Tracking' : handlePlaceHolder,
   'Groups' : handlePlaceHolder,
   'Inbound Change Sets' : handleIgnoreSection,
-  'Manage Users' : handleIgnoreSection,
+  'Manage Users' : handleManageUsers,
   'Page' : handlePage,
   'Partner Relationship Management' : handlePlaceHolder,
   'Security Controls' : handleIgnoreSection,
@@ -542,10 +616,15 @@ def sectionMap = [
   'Workflow Rule' : handleWorkflow
 ]
 
-def cli = new CliBuilder(usage: 'AuditTrail.groovy -[hfpDsdxuveai]')
+//--------------------------------------------------------------------------------------
+//
+//   main
+//
+//--------------------------------------------------------------------------------------
+
+def cli = new CliBuilder(usage: 'AuditTrail.groovy -[hfpDsdwxuveai]')
 
 cli.f(args:1, argName:'inputFile', 'Salesforce audit trail csv file')
-cli.s(args:1, argName:'sectionDebug', 'Section to debug')
 cli.x(args:1, argName:'excludeUser', 'Exclude changes by user portion of email address')
 cli.u(args:1, argName:'includeUser', 'Only show changes by user portion of email address')
 cli.i(args:1, argName:'ignoreList', 'List of csv keywords to ignore')
@@ -555,6 +634,7 @@ cli.a(args:1, argName:'apiVersion', 'Salesforce API version (only with -p option
 cli.h(longOpt:'help','Show this help text')
 cli.v(longOpt:'verbose','Verbose mode')
 cli.d(longOpt:'debug','Debug on')
+cli.w(longOpt:'warnIgnoreSection','Warn if section ignored')
 cli.e('Stop on Error')
 
 def options = cli.parse(args)
@@ -574,9 +654,9 @@ if (options.d) {
 	debug = true
 }
 
-if (options.s) {
-  sectionDebug = options.s
-  println "Got sectionDebug from command line: $sectionDebug"
+if (options.w) {
+	println "Set warnIgnoreSection from command line"
+	warnIgnoreSection = true
 }
 
 if (options.x) {
@@ -599,8 +679,6 @@ if (options.v) {
 	println "Set verbose from command line"
 	verbose = true
 }
-
-def managedPackagesList = ['BMXP','dsfs','QConfig','TMS','DocuSign','spotlightfs']
 
 if (options.i) {
   tmp = options.i
@@ -682,6 +760,36 @@ def f = new File(inputFile).withReader {
 		what = action.split(' ')[1]
 		remainder = action.substring(action.indexOf(what),)
 
+		// Next, check for the date if the user entered one.. ignore things older than that date
+
+		Date changeDate = null
+
+		try {
+		  changeDate = Date.parse('MM/dd/yyyy', dt)
+		} catch(e) {
+		  println "($totalLines) ERROR: caught Date parse exception, skipping item: " + it[0]
+
+		  if (stopOnError) {
+			System.exit(1)
+		  }
+
+		  numMalformed += 1
+		  return
+		}
+
+		if (debug) {
+			println "($totalLines) Date: " + changeDate + ", as time: " + changeDate.getTime()
+		}
+
+		if (changeDate.getTime() < startDate.getTime()) {
+			if (debug) {
+				println "($totalLines) Skipping date '$changeDate' entry older than start date '$startDate'"
+			}
+
+			numOldSkipped += 1
+			return
+		}
+		
 		// Try and filter out managed package stuff
 
 		def skipThis = false
@@ -737,58 +845,36 @@ def f = new File(inputFile).withReader {
 		  return
 		}
 
-		// Next, check for the date if the user entered one.. ignore things older than that date
-
-		Date changeDate = null
-
-		try {
-		  changeDate = Date.parse('MM/dd/yyyy', dt)
-		} catch(e) {
-		  println "($totalLines) ERROR: caught Date parse exception, skipping item: " + it[0]
-
-		  if (stopOnError) {
-			System.exit(1)
-		  }
-
-		  numMalformed += 1
-		  return
-		}
-
-		//Date changeDate = Date.parse(it[0].replace('"','').split(' ')[0])
-
-		if (debug) {
-			println "($totalLines) Date: " + changeDate + ", as time: " + changeDate.getTime()
-		}
-
-		if (changeDate.getTime() < startDate.getTime()) {
-			if (debug) {
-				println "($totalLines) Skipping date '$changeDate' entry older than start date '$startDate'"
-			}
-
-			numOldSkipped += 1
-			return
-		}
-		
 		if (!sectionMap.keySet().contains(section)) {
-		  if (listSkippedSections) {
-			println "WARNING: Skipping section: " + section
-		  }
-		  numSectionSkipped++
+		  println "WARNING: section: " + section + " was not found"
+		  numSectionNotFound++
 		  return
 		} else {
-		  // Call the handler method
-		  //println "($totalLines) calling sectionMap handler........ for section: $section"
-		  //println "($totalLines) calling sectionMap ae: " + ae
-		  //println "($totalLines) calling sectionMap dt: " + dt
-		  sectionMap[section](ae)
-		}
-		
-		if (verbose) {
+		  // Call the section handler method
+
+		  if (debug) {
+			println "($totalLines) calling sectionMap handler........ for section: $section"
+			println "($totalLines) calling sectionMap ae: " + ae
+			println "($totalLines) calling sectionMap dt: " + dt
+		  }
+		  
+		  if (verbose) {
 			println "\n($totalLines) Section \"$section\""
 			println "($totalLines) \tProcessing keyword \"$keyword\", what: \"$what\", date: $dt"
 			println "($totalLines) \t.... remainder: $remainder"
-		}
+		  }
 
+		  def ret = sectionMap[section](ae)
+
+		  if (ret != HANDLED) {
+			if (ret == NOT_HANDLED) {
+			  numSectionSkipped += 1
+			} else if (ret == IGNORED) {
+			  numIgnoreSkipped += 1
+			}
+		  }
+		}  // end else section was found
+		
 	    linesProcessed++
 		  
 	}  // end each closure
@@ -798,6 +884,11 @@ def f = new File(inputFile).withReader {
 println "\nProcessing Summary for changes since $startDate"
 println "Found $totalLines lines in file (minus 1 for header)"
 println "Number managed package entries skipped: $numManagedPackagesSkipped"
+
+if (numSectionNotFound > 0) {
+  println "WARNING: Number sections not found: $numSectionNotFound"
+}
+
 println "Number sections skipped: $numSectionSkipped"
 println "Number users skipped: $numUsersSkipped"
 println "Number in ignoreList skipped: $numIgnoreSkipped"
@@ -838,10 +929,10 @@ if (options.p == false) {
   
   if (profiles.size() > 0) {
 	println "\nProfiles ---------------------------------------------------------------\n"
-	printf("  %-25s %-25s %-15s\n\n", "Object", "Rule Name", "Last ChangedBy", "Last Date Changed")
+	printf("  %-20s %-25s %-35s %-15s %-15s\n\n", "Profile", "Layout", "Rec Type", "Last ChangedBy", "Last Date Changed")
 	
 	profiles.each{
-	  printf("  %-40s %-25s %-15s\n", it.key, it.value.user, it.value.dateChanged)
+	  printf("  %-20s %-25s %-35s %-15s %-15s\n", it.value.entity, it.value.object, it.value.entity2, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + profiles.size() + "\n"
   }
@@ -874,10 +965,10 @@ if (options.p == false) {
   if (objects.size() > 0) {
 	
 	println "\nObjects ---------------------------------------------------------------\n"
-	printf("  %-25s %-25s %-15s\n\n", "Object", "Last ChangedBy", "Last Date Changed")
+	printf("  %-40s %-25s %-15s\n\n", "Object", "Last ChangedBy", "Last Date Changed")
 	
 	objects.each{
-	  printf("  %-25s %-25s %-15s\n", it.key, it.value.user, it.value.dateChanged)
+	  printf("  %-40s %-25s %-15s\n", it.key, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + objects.size() + "\n"
   }
