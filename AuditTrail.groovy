@@ -57,7 +57,7 @@ def approvals = [:]
 def debug = false
 def verbose = false
 def listSkippedSections = true
-def listIgnored = true
+def listIgnored = false
 def warnIgnoreSection = false
 def stopOnError = false
 def apiVersion = '32.0'
@@ -126,7 +126,11 @@ class AuditEntry {
 //--------------------------------------------------------------------------------------
 def handlePlaceHolder
 handlePlaceHolder = { auditEntry ->
-  println "(handlePlaceHolder) enter, section: " + auditEntry.section
+
+  if (debug) {
+	println "(handlePlaceHolder) enter, section: " + auditEntry.section
+  }
+
   if (stopOnError) {
 	println "ERROR: stopping due to unhandled section: " + auditEntry.section
 	System.exit(1)
@@ -348,7 +352,8 @@ handleManageUsers = { auditEntry ->
 
   //print "(handleManageUsers) action: " + auditEntry.action
   
-  matcher = (auditEntry.action =~ "Changed profile (.*): (.*) for (.*) record type (.*)")
+  //matcher = (auditEntry.action =~ "Changed profile (.*): (.*) for (.*) record type (.*)")
+  matcher = (auditEntry.action =~ "Changed profile (.*): (.*) page layout for (.*) record type (.*)")
 
   if (matcher.matches()) {
 	profile = matcher[0][1]
@@ -357,8 +362,10 @@ handleManageUsers = { auditEntry ->
 
 	key = obj + "." + profile + "." + recType
 	
-	printf("(handleManageUsers) profile: %s, object: %s, rectype: %s\n",profile, obj, recType)
-	printf("(handleManageUsers) ae datechanged: %s\n", auditEntry.dateChanged)
+	if (debug) {
+	  printf("(handleManageUsers) profile: %s, object: %s, rectype: %s\n",profile, obj, recType)
+	  printf("(handleManageUsers) ae datechanged: %s\n", auditEntry.dateChanged)
+	}
 
 	auditEntry.object = obj
 	auditEntry.entity = profile  //recType
@@ -368,6 +375,30 @@ handleManageUsers = { auditEntry ->
 	  profiles[key] = auditEntry
 	}
   }
+
+  matcher2 = (auditEntry.action =~ "Changed profile (.*): (.*) object permissions were changed (.*)")
+
+  if (matcher2.matches()) {
+	profile = matcher2[0][1]
+	obj = matcher2[0][2]
+	recType = ""
+
+	key = obj + "." + profile + "." + recType
+	
+	if (debug) {
+	  printf("(handleManageUsers) profile: %s, object: %s, rectype: %s\n",profile, obj, recType)
+	  printf("(handleManageUsers) ae datechanged: %s\n", auditEntry.dateChanged)
+	}
+
+	auditEntry.object = obj
+	auditEntry.entity = profile  //recType
+	auditEntry.entity2 = recType
+	
+	if (!profiles.containsKey(key)) {
+	  profiles[key] = auditEntry
+	}
+  }
+
   return HANDLED
 }
 
@@ -608,6 +639,7 @@ def sectionMap = [
   'Manage Users' : handleManageUsers,
   'Page' : handlePage,
   'Partner Relationship Management' : handlePlaceHolder,
+  'Sandboxes' : handleIgnoreSection,
   'Security Controls' : handleIgnoreSection,
   'Sharing Rules' : handlePlaceHolder,
   'Static Resource' : handleIgnoreSection,
@@ -699,7 +731,11 @@ def startDate
 
 if (options.D) {
 	dt = options.D
-	println "Got startDate from command line: " + dt
+
+	if (debug) {
+	  println "Got startDate from command line: " + dt
+	}
+	
 	try {
 		startDate = Date.parse('MM/dd/yyyy', dt)
 		println "Start Date: " + startDate + " as time: " + startDate.getTime()
@@ -846,8 +882,14 @@ def f = new File(inputFile).withReader {
 		}
 
 		if (!sectionMap.keySet().contains(section)) {
-		  println "WARNING: section: " + section + " was not found"
-		  numSectionNotFound++
+
+		  // Not sure why, but sometimes the section is blank... as far as I can
+		  // tell, nothing in those we care about
+		  
+		  if (!section.equals("")) {
+			println "WARNING: section: " + section + " was not found"
+			numSectionNotFound++
+		  }
 		  return
 		} else {
 		  // Call the section handler method
@@ -929,10 +971,10 @@ if (options.p == false) {
   
   if (profiles.size() > 0) {
 	println "\nProfiles ---------------------------------------------------------------\n"
-	printf("  %-20s %-25s %-35s %-15s %-15s\n\n", "Profile", "Layout", "Rec Type", "Last ChangedBy", "Last Date Changed")
+	printf("  %-40s %-35s %-35s %-15s %-15s\n\n", "Profile", "Layout", "Rec Type", "Last ChangedBy", "Last Date Changed")
 	
 	profiles.each{
-	  printf("  %-20s %-25s %-35s %-15s %-15s\n", it.value.entity, it.value.object, it.value.entity2, it.value.user, it.value.dateChanged)
+	  printf("  %-40s %-35s %-35s %-15s %-15s\n", it.value.entity, it.value.object, it.value.entity2, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + profiles.size() + "\n"
   }
