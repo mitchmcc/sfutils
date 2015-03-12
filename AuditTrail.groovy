@@ -13,6 +13,7 @@
 //                         - Added filter by user
 //                         - Added user and date to report output
 // 02/20/15       mjm      - More report fixups; added filter by user
+// 03/12/15       mjm      - Fixed trigger handler to get actual trigger name
 //
 //--------------------------------------------------------------------------------------
 @Grab( 'com.xlson.groovycsv:groovycsv:1.0' )
@@ -265,6 +266,26 @@ handleValidationRule = { auditEntry ->
 	  validations[rule] = auditEntry
 	}
   }
+
+  removeMatcher = (auditEntry.action =~ "Removed (.*) validation (.*)")
+  
+  if (removeMatcher.matches()) {
+	if (debug) println "($totalLines) remove matcher1 " + removeMatcher[0][1]
+	if (debug) println "($totalLines) remove matcher2 " + removeMatcher[0][2]
+	
+	def obj = removeMatcher[0][1].replace('"','')
+	def rule = removeMatcher[0][2].replace('"','')
+
+	auditEntry.entity = rule
+	auditEntry.object = obj
+	
+	if (debug) printf(">>>> remove match for obj (key): %s, rule (value): %s\n",  obj, rule)
+	
+	if (!validations.containsKey(rule)) {
+	  validations[rule] = auditEntry
+	}
+  }
+  
   return HANDLED
 }
 
@@ -474,6 +495,9 @@ handlePage = { auditEntry ->
 
 def handleCustomObjects
 handleCustomObjects = { auditEntry ->
+
+  debug = true
+  
   if (debug) println "($totalLines) >>>> action: $auditEntry.action"
   
   fieldMatcher = (auditEntry.action =~ "Created custom field (.*) \\((.*)\\) on (.*)")
@@ -502,8 +526,10 @@ handleCustomObjects = { auditEntry ->
 	assert(!objects.containsKey(objectMatcher[0][1]))
 
 	obj = objectMatcher[0][1]
-	auditEntry.entity = ""
+	auditEntry.entity = "Created"
 	auditEntry.object = obj
+
+	printf("(handleCustomObjects) obj: %s", obj)
 	objects[obj] = auditEntry
   }
 
@@ -514,8 +540,8 @@ handleCustomObjects = { auditEntry ->
 	value = objectMatcher2[0][1]
 	field = obj + "." + objectMatcher2[0][2]
 	
-	printf("Custom Field: %s, Object: %s, Value: %s\n", field, obj, value)
-	auditEntry.entity = value
+	printf("(handleCustomObjects) Custom Field: %s, Object: %s, Value: %s\n", field, obj, value)
+	auditEntry.entity = field
 	auditEntry.object = obj
 	objects[field] = auditEntry
   }
@@ -536,6 +562,8 @@ handleCustomObjects = { auditEntry ->
 	  layouts[key] = auditEntry
 	}
   }
+
+  debug = false
   
   return HANDLED
 }
@@ -579,8 +607,13 @@ handleCustomTabs = { auditEntry ->
 def handleApexTrigger
 handleApexTrigger = { auditEntry ->
 
-  triggerName = auditEntry.action.split(' ')[1]
-  triggers[triggerName] = auditEntry
+  fieldMatcher = (auditEntry.action =~ "(Created|Changed) (.*) Trigger code: (.*)")
+  
+  if (fieldMatcher.matches()) {
+	entity = fieldMatcher[0][3]
+  }
+
+  triggers[entity] = auditEntry
 }
 
 // This lets us translate back from certain plural forms to the singular
@@ -1007,10 +1040,10 @@ if (options.p == false) {
   if (objects.size() > 0) {
 	
 	println "\nObjects ---------------------------------------------------------------\n"
-	printf("  %-40s %-25s %-15s\n\n", "Object", "Last ChangedBy", "Last Date Changed")
+	printf("  %-40s %-25s %-25s %-15s\n\n", "Object", "Entity", "Last ChangedBy", "Last Date Changed")
 	
 	objects.each{
-	  printf("  %-40s %-25s %-15s\n", it.key, it.value.user, it.value.dateChanged)
+	  printf("  %-40s %-25s %-25s %-15s\n", it.value.object, it.value.entity, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + objects.size() + "\n"
   }
