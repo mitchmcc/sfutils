@@ -14,6 +14,7 @@
 //                         - Added user and date to report output
 // 02/20/15       mjm      - More report fixups; added filter by user
 // 03/12/15       mjm      - Fixed trigger handler to get actual trigger name
+// 04/02/15       mjm      - fixed formatting for Fields output
 //
 //--------------------------------------------------------------------------------------
 @Grab( 'com.xlson.groovycsv:groovycsv:1.0' )
@@ -517,6 +518,27 @@ handleCustomObjects = { auditEntry ->
 	if (!fields.containsKey(object)) {
 	  fields[key] = auditEntry
 	}
+
+  }
+  
+  fieldMatcher2 = (auditEntry.action =~ "Changed formula of (.*) custom field on (.*) from (.*)")
+  
+  if (fieldMatcher2.matches()) {
+	printf(">>>> fieldMatcher2: Custom Field: %s, Object: %s\n",
+		   fieldMatcher2[0][1], fieldMatcher2[0][2])
+
+	entity = fieldMatcher2[0][1]
+	object= fieldMatcher2[0][2]
+
+	auditEntry.entity = entity
+	auditEntry.object= object
+
+	key = object + "." + entity
+	
+	if (!fields.containsKey(object)) {
+	  fields[key] = auditEntry
+	}
+	
   }
   
   objectMatcher = (auditEntry.action =~ "Created custom object: (.*)")
@@ -1004,7 +1026,7 @@ if (options.p == false) {
   
   if (profiles.size() > 0) {
 	println "\nProfiles ---------------------------------------------------------------\n"
-	printf("  %-40s %-35s %-35s %-15s %-15s\n\n", "Profile", "Layout", "Rec Type", "Last ChangedBy", "Last Date Changed")
+	printf("  %-40s %-35s %-35s %-15s %-15s\n\n", "Profile", "Layout", "Rec Type", "Last Changed By", "Last Date Changed")
 	
 	profiles.each{
 	  printf("  %-40s %-35s %-35s %-15s %-15s\n", it.value.entity, it.value.object, it.value.entity2, it.value.user, it.value.dateChanged)
@@ -1014,7 +1036,7 @@ if (options.p == false) {
   
   if (classes.size() > 0) {
 	println "\nApex Classes ---------------------------------------------------------------\n"
-	printf("  %-40s %-25s %-15s\n\n", "Class", "Last ChangedBy", "Last Date Changed")
+	printf("  %-40s %-25s %-15s\n\n", "Class", "Last Changed By", "Last Date Changed")
 	classes.each{
 	  //println 'Key: ' + it.key + ', Value: ' + it.value 
 	  //if (it.key.equals('User')) {
@@ -1029,7 +1051,7 @@ if (options.p == false) {
   
   if (triggers.size() > 0) {
 	println "\nTriggers ---------------------------------------------------------------\n"
-	printf("  %-40s %-25s %-15s\n\n", "Trigger", "Last ChangedBy", "Last Date Changed")
+	printf("  %-40s %-25s %-15s\n\n", "Trigger", "Last Changed By", "Last Date Changed")
 	
 	triggers.each{
 	  printf("  %-40s %-25s %-15s\n", it.key, it.value.user, it.value.dateChanged)
@@ -1040,7 +1062,7 @@ if (options.p == false) {
   if (objects.size() > 0) {
 	
 	println "\nObjects ---------------------------------------------------------------\n"
-	printf("  %-40s %-25s %-25s %-15s\n\n", "Object", "Entity", "Last ChangedBy", "Last Date Changed")
+	printf("  %-40s %-25s %-25s %-15s\n\n", "Object", "Entity", "Last Changed By", "Last Date Changed")
 	
 	objects.each{
 	  printf("  %-40s %-25s %-25s %-15s\n", it.value.object, it.value.entity, it.value.user, it.value.dateChanged)
@@ -1051,7 +1073,7 @@ if (options.p == false) {
   if (pages.size() > 0) {
 	
 	println "\nPages ---------------------------------------------------------------\n"
-	printf("  %-40s %-25s %-15s\n\n", "Page", "Last ChangedBy", "Last Date Changed")
+	printf("  %-40s %-25s %-15s\n\n", "Page", "Last Changed By", "Last Date Changed")
 	
 	pages.each{
 	  printf("  %-40s %-25s %-15s\n", it.key, it.value.user, it.value.dateChanged)
@@ -1061,7 +1083,7 @@ if (options.p == false) {
   
   if (workflows.size() > 0) {
 	println "\nWorkflow Rules ---------------------------------------------------------------\n"
-	printf("  %-25s %-55s %-25s %-15s\n\n", "Object", "Rule Name", "Last ChangedBy", "Last Date Changed")
+	printf("  %-25s %-55s %-25s %-15s\n\n", "Object", "Rule Name", "Last Changed By", "Last Date Changed")
 
 	workflows.each{
 	  if (it.value.entity.length() > 55) {
@@ -1078,7 +1100,7 @@ if (options.p == false) {
   if (validations.size() > 0) {
 	
 	println "\nValidation Rules ---------------------------------------------------------------\n"
-	printf("  %-25s %-40s %-25s %-15s\n\n", "Object", "Rule Name", "Last ChangedBy", "Last Date Changed")
+	printf("  %-25s %-40s %-25s %-15s\n\n", "Object", "Rule Name", "Last Changed By", "Last Date Changed")
 	
 	validations.each{
 	  printf("  %-25s %-40s %-25s %-15s\n", it.value.object, it.value.entity, it.value.user, it.value.dateChanged)
@@ -1088,7 +1110,7 @@ if (options.p == false) {
   
   if (layouts.size() > 0) {
 	println "\nLayouts ---------------------------------------------------------------\n"
-	printf("  %-25s %-40s %-25s %-15s\n\n", "Object", "Layout", "Last ChangedBy", "Last Date Changed")
+	printf("  %-25s %-40s %-25s %-15s\n\n", "Object", "Layout", "Last Changed By", "Last Date Changed")
 	
 	layouts.each{
 	  printf("  %-25s %-40s %-25s %-15s\n", it.value.entity, it.value.object, it.value.user, it.value.dateChanged)
@@ -1098,17 +1120,17 @@ if (options.p == false) {
   
   if (fields.size() > 0) {
 	println "\nFields ---------------------------------------------------------------\n"
-	printf("  %-25s %-40s %-25s %-15s\n\n", "Object", "Field", "Last ChangedBy", "Last Date Changed")
+	printf("  %-50s %-30s %-25s %-15s\n\n", "Object", "Field", "Last Changed By", "Last Date Changed")
 	
 	fields.each{
-	  printf("  %-25s %-40s %-25s %-15s\n", it.key, it.value.entity, it.value.user, it.value.dateChanged)
+	  printf("  %-50s %-30s %-25s %-15s\n", it.key, it.value.entity, it.value.user, it.value.dateChanged)
 	}
 	println "\nTotal: " + fields.size() + "\n"
   }
   
   if (tabs.size() > 0) {
 	println "\nTabs ---------------------------------------------------------------\n"
-	printf("  %-25s %-40s %-25s %-15s\n\n", "Tab", "Type", "Last ChangedBy", "Last Date Changed")
+	printf("  %-25s %-40s %-25s %-15s\n\n", "Tab", "Type", "Last Changed By", "Last Date Changed")
 	
 	tabs.each{
 	  printf("  %-25s %-40s %-25s %-15s\n", it.value.entity,it.value.object, it.value.user, it.value.dateChanged)
@@ -1118,7 +1140,7 @@ if (options.p == false) {
   
   if (components.size() > 0) {
 	println "\nComponents ---------------------------------------------------------------\n"
-	printf("  %-25s %-40s %-25s %-15s\n\n", "Component", "", "Last ChangedBy", "Last Date Changed")
+	printf("  %-25s %-40s %-25s %-15s\n\n", "Component", "", "Last Changed By", "Last Date Changed")
 	
 	components.each{
 	  printf("  %-25s %-40s %-25s %-15s\n", it.key, it.value.entity, it.value.user, it.value.dateChanged)
@@ -1128,7 +1150,7 @@ if (options.p == false) {
   
   if (approvals.size() > 0) {
 	println "\nApproval Processes ---------------------------------------------------------------\n"
-	printf("  %-25s %-40s %-25s %-15s\n\n", "Object", "Rule Name", "Last ChangedBy", "Last Date Changed")
+	printf("  %-25s %-40s %-25s %-15s\n\n", "Object", "Rule Name", "Last Changed By", "Last Date Changed")
 	
 	approvals.each{
 	  printf("  %-25s %-40s %-25s %-15s\n", it.value.object, it.value.entity, it.value.user, it.value.dateChanged)
